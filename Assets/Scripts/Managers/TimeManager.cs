@@ -1,7 +1,6 @@
 using UnityEngine;
 using System;
 using System.Threading;
-using UnityEngine;
 
 public class TimeManager : MonoBehaviour
 {
