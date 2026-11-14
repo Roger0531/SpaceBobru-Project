@@ -5,6 +5,7 @@ public class Engineer : Worker
     [SerializeField] float repairHours = 2f;
     [SerializeField] float healHours = 6f;
     [SerializeField] float researchHours = 6f;
+    [SerializeField] float produceHours = 8f;
 
     public override WorkerRole Role => WorkerRole.Engineer;
 
@@ -13,6 +14,7 @@ public class Engineer : Worker
         WorkType.Repair => repairHours,
         WorkType.Heal => healHours,
         WorkType.Research => researchHours,
+        WorkType.Produce => produceHours,
         _ => 0f
     };
 }
