@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 
 public enum ResourceType { Energy, Oxygen, Food }
@@ -29,6 +30,14 @@ public class ResourceManager : MonoBehaviour
     [SerializeField] float eatEveryHours = 24f;
     [SerializeField] float foodPerMeal = 1f;
     [SerializeField] float starveDamage = 10f;
+    [SerializeField] Animator energyAnimator;
+    [SerializeField] TextMeshProUGUI txtEnergyCount;
+    int lastEnergyStep = -1;
+    [SerializeField] Animator foodAnimator;
+    int lastFoodStep = -1;
+    //[SerializeField] Animator oxygenAnimator;
+    //[SerializeField] TextMeshProUGUI txtOxygenCount;
+    //int lastOxygenStep = -1;
 
     public event Action<ResourceType, float, float> OnResourceChanged;
     public event Action<ResourceType> OnResourceEmpty;
@@ -47,6 +56,35 @@ public class ResourceManager : MonoBehaviour
     void Start()
     {
         TimeManager.Instance.OnHourTick += HandleHourTick;
+        UpdateEnergyAnimation(GetValue(ResourceType.Energy));
+        UpdateFoodAnimation(GetValue(ResourceType.Food));
+        //UpdateOxygenAnimation(GetValue(ResourceType.Oxygen));
+    }
+
+    void UpdateEnergyAnimation(float value)
+    {
+        if (energyAnimator == null) return;
+
+        // 0-5 -> 0, 5-10 -> 5, ..., 95-100 -> 95, рівно 100 -> 100
+        int step = Mathf.Clamp(Mathf.FloorToInt(value / 5f) * 5, 0, 100);
+
+        if (step == lastEnergyStep) return; // не перезапускаємо ту саму анімацію
+        lastEnergyStep = step;
+        txtEnergyCount.text = $"{step}%";
+        energyAnimator.Play(step.ToString());
+    }
+
+    void UpdateFoodAnimation(float value)
+    {
+        if (foodAnimator == null) return;
+
+        // Анімація відповідає точній кількості їжі: 0, 1, 2 ... max
+        int step = Mathf.Max(0, Mathf.FloorToInt(value));
+
+        if (step == lastFoodStep) return;
+        lastFoodStep = step;
+
+        foodAnimator.Play(step.ToString());
     }
 
     void OnDestroy()
@@ -102,6 +140,11 @@ public class ResourceManager : MonoBehaviour
         r.value = Mathf.Clamp(r.value + amount, 0f, r.max);
         OnResourceChanged?.Invoke(type, r.value, r.max);
 
+        if (type == ResourceType.Energy)
+            UpdateEnergyAnimation(r.value);
+        else if (type == ResourceType.Food)
+            UpdateFoodAnimation(r.value);
+
         if (r.value <= 0f && amount < 0f)
             OnResourceEmpty?.Invoke(type);
     }
@@ -121,7 +164,7 @@ public class ResourceManager : MonoBehaviour
         var r = Get(type);
         return r != null ? r.value : 0f;
     }
-
+    
     public bool IsFull(ResourceType type)
     {
         var r = Get(type);

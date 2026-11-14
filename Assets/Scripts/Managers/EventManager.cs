@@ -38,6 +38,16 @@ public class EventManager : MonoBehaviour
     [SerializeField] private Button btnPageOne;
     [SerializeField] private Button btnPageTwo;
 
+    [Header("Анімації")]
+    [SerializeField] private Animator panel1Animator;   // аніматор panel1
+    [SerializeField] private Animator[] buttonAnimators;   // аніматор panel2
+    //[SerializeField] private Animator pageOneAnimator;  // аніматор кнопки сторінки 1
+    //[SerializeField] private Animator pageTwoAnimator;
+
+    static readonly int ClosableHash = Animator.StringToHash("closable");
+    static readonly int PageHash = Animator.StringToHash("CurrentPage");
+    private int currentPage = 1;
+
     // Підписуйтесь, щоб застосувати наслідки вибору (енергія, кисень тощо)
     public event System.Action<EventInfo, EventChoice> ChoiceSelected;
 
@@ -46,6 +56,10 @@ public class EventManager : MonoBehaviour
 
     private bool busy;
     private int lastHandledTick = -1;
+    private bool panel1Closable = true;
+
+    // Чи ми самі поставили час на паузу під час вибору
+    private bool pausedByChoice;
 
     private void Awake()
     {
@@ -63,6 +77,12 @@ public class EventManager : MonoBehaviour
 
         btnPageOne.onClick.AddListener(() => ShowPage(1));
         btnPageTwo.onClick.AddListener(() => ShowPage(2));
+    }
+
+    private void OnDestroy()
+    {
+        // Якщо менеджер знищили посеред вибору, не лишаємо гру на паузі
+        ResumeTimeAfterChoice();
     }
 
     private void Update()
@@ -104,21 +124,21 @@ public class EventManager : MonoBehaviour
         if (PowerDrainActive || events.Count == 0) yield break;
         if (Random.value >= blackoutChance) yield break;
 
-        txtEventNamePanel1.text = events[0].eventName;
-        txtEventDescriptionPanel1.text = events[0].eventDescription +
-            "\n\n\n<b>!!!Base takes 10% of energy every 4 hours and energy does not produce!!!</b>";
-
         PowerDrainActive = true;
-        panel1.SetActive(true);
+        OpenPanel1(
+            events[0].eventName,
+            events[0].eventDescription +
+            "<b>!!!Base takes 10% of energy every 4 hours and energy does not produce!!!</b>",
+            closable: true);
+
         yield return new WaitForSeconds(panelDelay);
         yield return WaitForOk();
     }
 
     private IEnumerator ShowSimpleEvent(EventInfo e)
     {
-        txtEventNamePanel1.text = e.eventName;
-        txtEventDescriptionPanel1.text = e.eventDescription;
-        panel1.SetActive(true);
+        // Панель з кнопкою OK: можна закрити
+        OpenPanel1(e.eventName, e.eventDescription, closable: true);
 
         yield return new WaitForSeconds(panelDelay);
         yield return WaitForOk();
@@ -128,15 +148,20 @@ public class EventManager : MonoBehaviour
 
     private IEnumerator ShowChoiceEvent(EventInfo e)
     {
-        txtEventNamePanel1.text = e.eventName;
+        // Ігровий час стоїть, поки гравець не зробить вибір
+        PauseTimeForChoice();
+
         txtEventNamePanel2.text = e.eventName;
-        txtEventDescriptionPanel1.text = e.eventDescription;
 
         EventChoice selected = null;
         SetupChoice(btnChoice1, txtChoice1, txtChoiceDescription1, GetChoice(e, 0), c => selected = c);
         SetupChoice(btnChoice2, txtChoice2, txtChoiceDescription2, GetChoice(e, 1), c => selected = c);
 
+        // Панель без кнопки OK: закриється лише після вибору
+        OpenPanel1(e.eventName, e.eventDescription, closable: false);
         ShowPage(1);
+
+        // Затримка рахується в реальному часі, на паузу гри вона не впливає
         yield return new WaitForSeconds(panelDelay);
         SetPageButtons(true);
 
@@ -149,9 +174,44 @@ public class EventManager : MonoBehaviour
         panel1.SetActive(false);
         panel2.SetActive(false);
         SetPageButtons(false);
+
+        ResumeTimeAfterChoice();
+    }
+
+    // ---------- Пауза часу ----------
+
+    private void PauseTimeForChoice()
+    {
+        var time = TimeManager.Instance;
+        if (time == null || time.IsPaused) return; // вже на паузі (гравцем), нічого не чіпаємо
+
+        time.Pause();
+        pausedByChoice = true;
+    }
+
+    private void ResumeTimeAfterChoice()
+    {
+        if (!pausedByChoice) return;
+        pausedByChoice = false;
+
+        var time = TimeManager.Instance;
+        if (time != null) time.Resume();
     }
 
     // ---------- Допоміжні методи ----------
+
+    // closable = true  -> панель з кнопкою OK, яку можна закрити
+    // closable = false -> без кнопки OK, інша анімація панелі
+    private void OpenPanel1(string title, string description, bool closable)
+    {
+        txtEventNamePanel1.text = title;
+        txtEventDescriptionPanel1.text = description;
+        btnOk.gameObject.SetActive(false); // для closable її увімкне WaitForOk
+
+        panel1Closable = closable;
+        panel1.SetActive(true);
+        ApplyPanelAnimation();
+    }
 
     private IEnumerator WaitForOk()
     {
@@ -201,15 +261,38 @@ public class EventManager : MonoBehaviour
         if (value != 0) sb.AppendLine($"-{value}{suffix}");
     }
 
+    // ---------- Сторінки та анімації ----------
+
     private void ShowPage(int page)
     {
+        currentPage = page;
         panel1.SetActive(page == 1);
         panel2.SetActive(page == 2);
+
+        // Вимкнена і знову ввімкнена панель скидає аніматор, тому виставляємо параметри заново
+        ApplyPanelAnimation();
+        ApplyPageAnimation();
     }
 
     private void SetPageButtons(bool active)
     {
         btnPageOne.gameObject.SetActive(active);
         btnPageTwo.gameObject.SetActive(active);
+        if (active) ApplyPageAnimation();
+    }
+
+    private void ApplyPanelAnimation()
+    {
+        if (panel1Animator != null && panel1Animator.isActiveAndEnabled)
+            panel1Animator.SetBool(ClosableHash, panel1Closable);
+    }
+
+    private void ApplyPageAnimation()
+    {
+        if (buttonAnimators == null) return;
+
+        foreach (var a in buttonAnimators)
+            if (a != null && a.isActiveAndEnabled)
+                a.SetInteger(PageHash, currentPage);
     }
 }
