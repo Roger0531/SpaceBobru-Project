@@ -10,7 +10,7 @@ public abstract class Worker : MonoBehaviour
 
     [SerializeField] string displayName = "Worker";
     [SerializeField] float maxHp = 100f;
-    [SerializeField] float hp = 100f;
+    [SerializeField] float hp = 3f;
     [SerializeField] int startZoneId = -1;
 
     [SerializeField, Range(0, 23)] int shiftStart = 6;
