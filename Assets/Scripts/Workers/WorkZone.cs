@@ -1,9 +1,9 @@
-using System.Collections.Generic;
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
-public enum ZoneType {Core, LifeSupport, Food, Science, Living}
-public enum WorkType { None, Repair, Heal, Research}
+public enum ZoneType { Core, LifeSupport, Food, Science, Living }
+public enum WorkType { None, Repair, Heal, Research }
 
 public static class Research
 {
@@ -21,7 +21,7 @@ public class WorkZone : MonoBehaviour
 {
     public static readonly List<WorkZone> All = new();
 
-    [Header("Identify")]
+    [Header("Identity")]
     [SerializeField] int id;
     [SerializeField] string displayName = "Module";
     [SerializeField] ZoneType type;
@@ -40,10 +40,12 @@ public class WorkZone : MonoBehaviour
     public ZoneType Type => type;
     public float Condition => condition;
     public float MaxCondition => maxCondition;
-    public bool IsBroken => condition < 0f;
+    public bool IsBroken => condition <= 0f;
     public bool IsDamaged => condition < maxCondition;
 
+
     public WorkType CurrentTask => IsDamaged ? WorkType.Repair : mainWork;
+
 
     public List<Worker> Team => Worker.All.FindAll(w => w.CurrentZone == this);
     public bool IsFull => Team.Count >= maxWorkers;
@@ -54,7 +56,8 @@ public class WorkZone : MonoBehaviour
     public static WorkZone FindById(int id) => All.Find(z => z.id == id);
 
     void OnEnable() => All.Add(this);
-    void InDisable() => All.Remove(this);
+    void OnDisable() => All.Remove(this);
+
 
     public void ApplyWork(WorkType work)
     {
@@ -64,10 +67,10 @@ public class WorkZone : MonoBehaviour
                 ChangeCondition(amountPerTask);
                 break;
             case WorkType.Heal:
-                ChangeCondition(amountPerTask);
+                HealMostInjured(amountPerTask);
                 break;
             case WorkType.Research:
-                ChangeCondition(amountPerTask);
+                Research.Add(amountPerTask);
                 break;
         }
         OnWorkApplied?.Invoke(this, work);
@@ -78,7 +81,8 @@ public class WorkZone : MonoBehaviour
         Worker patient = null;
         foreach (var w in Worker.All)
         {
-            if (w.Hp < w.MaxHp && (patient == null || w.Hp < patient.Hp)) patient = w;
+            if (w.Hp < w.MaxHp && (patient == null || w.Hp < patient.Hp))
+                patient = w;
         }
         if (patient != null) patient.ChangeHp(amount);
     }
@@ -88,5 +92,4 @@ public class WorkZone : MonoBehaviour
         condition = Mathf.Clamp(condition + amount, 0f, maxCondition);
         OnConditionChanged?.Invoke(this);
     }
-
 }

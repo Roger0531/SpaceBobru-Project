@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-public enum WorkerRole {Engineer = 1, Medic = 2,  Scientist = 3}
+public enum WorkerRole { Engineer = 1, Medic = 2, Scientist = 3 }
 
 public abstract class Worker : MonoBehaviour
 {
+
     public static readonly List<Worker> All = new();
 
     [SerializeField] string displayName = "Worker";
@@ -13,26 +14,29 @@ public abstract class Worker : MonoBehaviour
     [SerializeField] float hp = 100f;
     [SerializeField] int startZoneId = -1;
 
+    public abstract WorkerRole Role { get; }
     public int Id => (int)Role;
     public string DisplayName => displayName;
     public float Hp => hp;
     public float MaxHp => maxHp;
     public bool IsCritical => hp <= 0f;
     public WorkZone CurrentZone { get; private set; }
-    public abstract WorkerRole Role { get; }
 
-    public float Efficiency => IsCritical ? 0f : (hp < maxHp * 0.5f ? 0.5f: 1f);
+
+    public float Efficiency => IsCritical ? 0f : (hp < maxHp * 0.5f ? 0.5f : 1f);
+
 
     public abstract float GetWorkHours(WorkType work);
+
 
     public float CurrentTaskHours
     {
         get
         {
             if (CurrentZone == null || Efficiency <= 0f) return 0f;
-            var task == CurrentZone.CurrentTask;
+            var task = CurrentZone.CurrentTask;
             if (task == WorkType.None) return 0f;
-            return Mathf.Max(0.1f, GetWorkHours(task) / Efficiency);
+            return Mathf.Max(0.1f, GetWorkHours(task)) / Efficiency;
         }
     }
 
@@ -45,12 +49,13 @@ public abstract class Worker : MonoBehaviour
         }
     }
 
-
     public event Action<Worker> OnHpChanged;
     public event Action<Worker, WorkZone> OnZoneChanged;
     public event Action<Worker, WorkType> OnWorkDone;
+
     float progressHours;
     WorkType progressTask = WorkType.None;
+
     public static Worker FindById(int id) => All.Find(w => w.Id == id);
 
     protected virtual void OnEnable() => All.Add(this);
@@ -64,7 +69,8 @@ public abstract class Worker : MonoBehaviour
 
     protected virtual void OnDestroy()
     {
-        if (TimeManager.Instance != null) TimeManager.Instance.OnHourTick -= HandleHourTick;
+        if (TimeManager.Instance != null)
+            TimeManager.Instance.OnHourTick -= HandleHourTick;
     }
 
     void HandleHourTick(int day, int hour)
@@ -100,6 +106,8 @@ public abstract class Worker : MonoBehaviour
         progressHours = 0f;
         progressTask = WorkType.None;
     }
+
+    public void AssignToZone(int zoneId) => TryAssignToZone(zoneId);
 
     public bool TryAssignToZone(int zoneId)
     {

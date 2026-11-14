@@ -1,18 +1,16 @@
 using System;
 using UnityEngine;
 
-
 public class TimeManager : MonoBehaviour
 {
     public static TimeManager Instance { get; private set; }
 
     [SerializeField]
-    float
-        secondsPerHour = 10f;
+    float secondsPerHour = 10f;
     [SerializeField] int StartDay = 1;
     [SerializeField] int StartHour = 6;
     [SerializeField] bool startPaused = false;
-    public int Day { get; private set;}
+    public int Day { get; private set; }
     public int Hour { get; private set; }
     public bool IsPaused { get; private set; }
 
@@ -38,7 +36,7 @@ public class TimeManager : MonoBehaviour
     {
         if (IsPaused) return;
         timer += Time.deltaTime;
-        while (timer>= secondsPerHour)
+        while (timer >= secondsPerHour)
         {
             timer -= secondsPerHour;
             AdvanceHour();
@@ -48,7 +46,7 @@ public class TimeManager : MonoBehaviour
     void AdvanceHour()
     {
         Hour++;
-            if (Hour >= 24)
+        if (Hour >= 24)
         {
             Hour = 0;
             Day++;
@@ -68,5 +66,4 @@ public class TimeManager : MonoBehaviour
 
         OnPauseChanged?.Invoke(IsPaused);
     }
-
 }
