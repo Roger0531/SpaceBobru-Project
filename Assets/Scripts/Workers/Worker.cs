@@ -6,13 +6,15 @@ public enum WorkerRole { Engineer = 1, Medic = 2, Scientist = 3 }
 
 public abstract class Worker : MonoBehaviour
 {
-
     public static readonly List<Worker> All = new();
 
     [SerializeField] string displayName = "Worker";
     [SerializeField] float maxHp = 100f;
     [SerializeField] float hp = 100f;
     [SerializeField] int startZoneId = -1;
+
+    [SerializeField, Range(0, 23)] int shiftStart = 6;
+    [SerializeField, Range(0, 24)] int shiftEnd = 22;
 
     public abstract WorkerRole Role { get; }
     public int Id => (int)Role;
@@ -22,12 +24,9 @@ public abstract class Worker : MonoBehaviour
     public bool IsCritical => hp <= 0f;
     public WorkZone CurrentZone { get; private set; }
 
-
     public float Efficiency => IsCritical ? 0f : (hp < maxHp * 0.5f ? 0.5f : 1f);
 
-
     public abstract float GetWorkHours(WorkType work);
-
 
     public float CurrentTaskHours
     {
@@ -56,6 +55,12 @@ public abstract class Worker : MonoBehaviour
     float progressHours;
     WorkType progressTask = WorkType.None;
 
+    public bool IsOnShift(int hour) =>
+        shiftStart <= shiftEnd
+            ? hour >= shiftStart && hour < shiftEnd
+            : hour >= shiftStart || hour < shiftEnd;
+
+
     public static Worker FindById(int id) => All.Find(w => w.Id == id);
 
     protected virtual void OnEnable() => All.Add(this);
@@ -76,6 +81,7 @@ public abstract class Worker : MonoBehaviour
     void HandleHourTick(int day, int hour)
     {
         if (CurrentZone == null || IsCritical) return;
+        if (!IsOnShift(hour)) return;
 
         var task = CurrentZone.CurrentTask;
         if (task == WorkType.None)
@@ -83,6 +89,7 @@ public abstract class Worker : MonoBehaviour
             ResetProgress();
             return;
         }
+
 
         if (task != progressTask)
         {
@@ -106,6 +113,7 @@ public abstract class Worker : MonoBehaviour
         progressHours = 0f;
         progressTask = WorkType.None;
     }
+
 
     public void AssignToZone(int zoneId) => TryAssignToZone(zoneId);
 

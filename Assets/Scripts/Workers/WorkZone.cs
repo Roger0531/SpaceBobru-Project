@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public enum ZoneType { Core, LifeSupport, Food, Science, Living }
-public enum WorkType { None, Repair, Heal, Research }
+public enum WorkType { None, Repair, Heal, Research, Produce }
 
 public static class Research
 {
@@ -28,7 +28,10 @@ public class WorkZone : MonoBehaviour
 
     [Header("Work")]
     [SerializeField] WorkType mainWork = WorkType.None;
+    [Tooltip("Only for Main Work = Produce: which resource this zone produces")]
+    [SerializeField] ResourceType producedResource = ResourceType.Food;
     [SerializeField, Min(1)] int maxWorkers = 3;
+    [Tooltip("Result of one finished unit of work (repair / heal / research / produced units)")]
     [SerializeField] float amountPerTask = 20f;
 
     [Header("Condition")]
@@ -43,9 +46,18 @@ public class WorkZone : MonoBehaviour
     public bool IsBroken => condition <= 0f;
     public bool IsDamaged => condition < maxCondition;
 
+    public WorkType CurrentTask
+    {
+        get
+        {
+            if (IsDamaged) return WorkType.Repair;
+            if (mainWork == WorkType.Produce && IsStorageFull) return WorkType.None;
+            return mainWork;
+        }
+    }
 
-    public WorkType CurrentTask => IsDamaged ? WorkType.Repair : mainWork;
-
+    bool IsStorageFull =>
+        ResourceManager.Instance != null && ResourceManager.Instance.IsFull(producedResource);
 
     public List<Worker> Team => Worker.All.FindAll(w => w.CurrentZone == this);
     public bool IsFull => Team.Count >= maxWorkers;
@@ -57,7 +69,6 @@ public class WorkZone : MonoBehaviour
 
     void OnEnable() => All.Add(this);
     void OnDisable() => All.Remove(this);
-
 
     public void ApplyWork(WorkType work)
     {
@@ -71,6 +82,10 @@ public class WorkZone : MonoBehaviour
                 break;
             case WorkType.Research:
                 Research.Add(amountPerTask);
+                break;
+            case WorkType.Produce:
+                if (ResourceManager.Instance != null)
+                    ResourceManager.Instance.Change(producedResource, amountPerTask);
                 break;
         }
         OnWorkApplied?.Invoke(this, work);
