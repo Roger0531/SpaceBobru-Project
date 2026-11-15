@@ -45,14 +45,18 @@ public class WorkZone : MonoBehaviour
     [Tooltip("Only for Main Work = Produce: which resource this zone produces")]
     [SerializeField] ResourceType producedResource = ResourceType.Food;
     [SerializeField, Min(1)] int maxWorkers = 3;
+    public int MaxWorkers => maxWorkers;
     [Tooltip("Result of one finished unit of work (repair / heal / research / produced units)")]
     [SerializeField] float amountPerTask = 20f;
     [Tooltip("Час одного циклу роботи (години) для працівника з характеристикою = 4. Якщо характеристика 8, то вдвічі довше.")]
     [SerializeField, Min(0.1f)] float workHours = 4f;
 
-    [Header("Position for workers")]
+    [Header("Positions for workers (one per worker slot)")]
+    [Tooltip("Вимкнено: усі працівники з'являються в позиції об'єкта зони.")]
     [SerializeField] bool useManualPosition = true;
-    [SerializeField] Vector3 manualPosition;
+    [Tooltip("Світові координати. Кількість підлаштовується під Max Workers. Мають бути всередині колайдера зони.")]
+    [SerializeField] Vector3[] manualPositions = new Vector3[3];
+    readonly Dictionary<Worker, int> slots = new();
 
     [Header("Conditions to work")]
     [SerializeField] bool requireWorkerInside = true;
@@ -77,7 +81,41 @@ public class WorkZone : MonoBehaviour
     public bool IsDamaged => condition < maxCondition;
     public ZoneModule Module => module;
 
-    public Vector3 WorkPosition => useManualPosition ? manualPosition : transform.position;
+    /// <summary>Перша позиція (для гізмо та перевірок).</summary>
+    public Vector3 WorkPosition => GetSlotPosition(0);
+
+    Vector3 GetSlotPosition(int index)
+    {
+        if (!useManualPosition || manualPositions == null || manualPositions.Length == 0)
+            return transform.position;
+        return manualPositions[Mathf.Clamp(index, 0, manualPositions.Length - 1)];
+    }
+
+    /// <summary>Резервує вільну позицію для працівника й повертає її (для телепортації).</summary>
+    public Vector3 ReserveWorkPosition(Worker w)
+    {
+        // прибираємо позиції тих, хто вже пішов із зони
+        var stale = new List<Worker>();
+        foreach (var kv in slots)
+            if (kv.Key == null || kv.Key.CurrentZone != this) stale.Add(kv.Key);
+        foreach (var s in stale) slots.Remove(s);
+
+        if (slots.TryGetValue(w, out int own)) return GetSlotPosition(own);
+
+        int count = Mathf.Max(1, manualPositions != null ? manualPositions.Length : 1);
+        int free = -1;
+        for (int i = 0; i < count && free < 0; i++)
+        {
+            bool taken = false;
+            foreach (var kv in slots)
+                if (kv.Value == i) { taken = true; break; }
+            if (!taken) free = i;
+        }
+        if (free < 0) free = count - 1; // слоти скінчились: ставимо в останню
+
+        slots[w] = free;
+        return GetSlotPosition(free);
+    }
 
     bool WorkEnabledOk =>
         !requireWorkEnabled || (WorkManager.Instance != null && WorkManager.Instance.WorkEnabled);
@@ -99,12 +137,22 @@ public class WorkZone : MonoBehaviour
 
     void Start()
     {
-        if (requireWorkerInside && TryGetComponent<Collider2D>(out var col) &&
-            !col.OverlapPoint(WorkPosition))
+        if (!requireWorkerInside || !useManualPosition || manualPositions == null) return;
+        if (!TryGetComponent<Collider2D>(out var col)) return;
+
+        for (int i = 0; i < manualPositions.Length; i++)
         {
-            Debug.LogWarning($"{displayName}: WorkPosition {WorkPosition} is outside the zone collider, " +
-                             "workers teleported there will not count as present.", this);
+            if (!col.OverlapPoint(manualPositions[i]))
+                Debug.LogWarning($"{displayName}: position {i + 1} {manualPositions[i]} is outside the zone collider, " +
+                                 "a worker teleported there will not count as present.", this);
         }
+    }
+
+    void OnValidate()
+    {
+        int n = Mathf.Max(1, maxWorkers);
+        if (manualPositions == null || manualPositions.Length != n)
+            Array.Resize(ref manualPositions, n);
     }
 
     // ---- Присутність у колайдері ----
@@ -249,17 +297,28 @@ public class WorkZone : MonoBehaviour
     }
 
     // ---- Редактор ----
-    [ContextMenu("Set position from this transform")]
-    void SetPositionFromTransform()
+    [ContextMenu("Spread positions around this transform")]
+    void SpreadPositions()
     {
-        manualPosition = transform.position;
         useManualPosition = true;
+        int n = Mathf.Max(1, maxWorkers);
+        manualPositions = new Vector3[n];
+        for (int i = 0; i < n; i++)
+            manualPositions[i] = transform.position + new Vector3((i - (n - 1) / 2f) * 0.6f, 0f, 0f);
     }
 
     void OnDrawGizmosSelected()
     {
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(WorkPosition, 0.1f);
-        Gizmos.DrawLine(transform.position, WorkPosition);
+        int n = useManualPosition && manualPositions != null ? manualPositions.Length : 1;
+        for (int i = 0; i < n; i++)
+        {
+            Vector3 p = GetSlotPosition(i);
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawWireSphere(p, 0.1f);
+            Gizmos.DrawLine(transform.position, p);
+#if UNITY_EDITOR
+            UnityEditor.Handles.Label(p + Vector3.up * 0.2f, (i + 1).ToString());
+#endif
+        }
     }
 }
