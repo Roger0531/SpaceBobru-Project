@@ -17,8 +17,7 @@ public class Rover : MonoBehaviour
     public static Rover Instance { get; private set; }
 
     [SerializeField] float hpLossPerTrip = 1f;
-    [SerializeField] float minEnergyAfterTrip = 0f;
-    [SerializeField] float minOxygenAfterTrip = 0f;
+    [SerializeField] float requiredMargin = 1f;
     [SerializeField]
     List<Mission> missions = new()
     {
@@ -150,12 +149,12 @@ public class Rover : MonoBehaviour
         var rm = ResourceManager.Instance;
         if (rm != null)
         {
-            if (rm.GetValue(ResourceType.Energy) - mission.energyCost < minEnergyAfterTrip)
+            if (rm.GetValue(ResourceType.Energy) < mission.energyCost + requiredMargin)
             {
                 reason = "not enough energy";
                 return false;
             }
-            if (rm.GetValue(ResourceType.Oxygen) - mission.oxygenCost < minOxygenAfterTrip)
+            if (rm.GetValue(ResourceType.Oxygen) < mission.oxygenCost + requiredMargin)
             {
                 reason = "not enough oxygen";
                 return false;
