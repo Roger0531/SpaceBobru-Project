@@ -67,4 +67,14 @@ public class SolarPanelModule: ZoneModule
 
     void RecalculateProduction() =>
         energyProductionMul = cableBroken ? 0f : (dirty ? dirtMultiplier : 1f);
+
+    protected override float EnergyProducedBonus => Bonus(ResearchEffectKind.SolarEnergy);
+
+    protected override bool TryAvoidEvent(EventInfo e)
+    {
+        if (e.eventID != dirtEventId && e.eventID != cableEventId) return false;
+
+        float avoid = Bonus(ResearchEffectKind.SolarBreakdownChance) / 100f;
+        return avoid > 0f && Random.value < avoid;
+    }
 }

@@ -5,7 +5,6 @@ using UnityEngine.UI;
 
 public class OrderPanel : MonoBehaviour
 {
-    // власний список варіантів героя: вміст, кнопки та збережена позиція прокрутки
     class HeroList
     {
         public RectTransform content;
@@ -16,7 +15,7 @@ public class OrderPanel : MonoBehaviour
     [Header("Panel")]
     [SerializeField] GameObject panel;
     [SerializeField] Button confirmButton;
-    [Tooltip("Необов'язково: «Накази: 2/3»")]
+    [Tooltip("Необов'язково: «Orders: 2/3»")]
     [SerializeField] TMP_Text progressLabel;
 
     [Header("Heroes")]
@@ -31,6 +30,9 @@ public class OrderPanel : MonoBehaviour
     [SerializeField] ZoneButton zoneButtonPrefab;
     [SerializeField] float zoneSpacing = 6f;
     [SerializeField] float zonePadding = 8f;
+
+    [Header("Research")]
+    [SerializeField] ResearchScreen researchScreen;
 
     readonly List<Worker> heroes = new();
     readonly HashSet<Worker> available = new();
@@ -112,19 +114,56 @@ public class OrderPanel : MonoBehaviour
     {
         panel.SetActive(false);
         ClearLists();
+        if (researchScreen != null && researchScreen.IsOpen) researchScreen.Close();
     }
 
     void Confirm()
     {
         if (!AllOrdered()) return;
 
+        // герої, які їдуть досліджувати, спершу обирають дослідження
+        var researchers = new List<Worker>();
+        foreach (var hero in heroes)
+        {
+            if (!available.Contains(hero) || !ordered.Contains(hero)) continue;
+            if (pending[hero].work == WorkType.Research) researchers.Add(hero);
+        }
+
+        if (researchers.Count > 0 && researchScreen != null && ResearchTree.Instance != null)
+        {
+            panel.SetActive(false);
+            researchScreen.Open(researchers, picks => FinishOrders(picks));
+            return;
+        }
+
+        FinishOrders(null);
+    }
+
+    /// <summary>Застосовує накази й відправляє обраних героїв на дослідження. picks = null, якщо досліджень немає.</summary>
+    void FinishOrders(Dictionary<Worker, ResearchHext> picks)
+    {
+        var tree = ResearchTree.Instance;
+
         foreach (var hero in heroes)
         {
             if (!available.Contains(hero) || !ordered.Contains(hero)) continue;
 
             var o = pending[hero];
+
+            // дослідник їде в науковий блок і лишається там на весь час дослідження
+            if (o.work == WorkType.Research)
+            {
+                if (picks != null && tree != null &&
+                    picks.TryGetValue(hero, out var hex) && tree.IsAvailable(hex))
+                {
+                    wm.TryGiveOrder(hero, o.zone);   // телепорт у науковий блок (до запуску дослідження)
+                    tree.StartResearch(hex, hero);
+                }
+                continue;
+            }
+
             if (o.zone != hero.CurrentZone || o.Preferred != hero.PreferredWork)
-                wm.TryGiveOrder(hero, o.zone.Id, o.Preferred);
+                wm.TryGiveOrder(hero, o.zone, o.Preferred);
         }
 
         wm.CloseOrders();
@@ -145,7 +184,8 @@ public class OrderPanel : MonoBehaviour
     {
         foreach (var o in options)
         {
-            if (o.zone.GetOrderBlockReason(hero, o.work) == null &&
+            if (BlockReason(hero, o) != null) continue;
+            if (o.work == WorkType.Research ||
                 OccupiedByOthers(o.zone, hero) < o.zone.MaxWorkers)
                 return true;
         }
@@ -181,7 +221,7 @@ public class OrderPanel : MonoBehaviour
 
     // ---------- Варіанти наказів ----------
 
-    /// <summary>Варіанти: пошкоджена зона дає один варіант «Ремонт», зона без роботи дає недоступний варіант,
+    /// <summary>Пошкоджена зона дає один варіант «Repair», зона без роботи дає недоступний варіант,
     /// науковий блок дає два (дослідження й лікування).</summary>
     void BuildOptions()
     {
@@ -213,6 +253,39 @@ public class OrderPanel : MonoBehaviour
 
     /// <summary>Тут можна відфільтрувати варіанти для конкретного героя.</summary>
     bool IsOptionListed(Worker hero, ZoneOption option) => true;
+
+    /// <summary>null, якщо варіант доступний; інакше причина блокування.</summary>
+    string BlockReason(Worker hero, ZoneOption o)
+    {
+        string reason = o.zone.GetOrderBlockReason(hero, o.work);
+        if (reason != null) return reason;
+
+        if (o.work == WorkType.Research && ResearchTree.Instance != null)
+        {
+            var tree = ResearchTree.Instance;
+
+            // досліджень не лишилось для всіх, хто вже обрав «Research»
+            if (tree.AvailableCount() - OthersResearching(hero) <= 0)
+                return "no research left";
+
+            // жодного з доступних цей герой не встигне до відбою
+            if (tree.AvailableCountFor(hero) == 0)
+                return "not enough time before bedtime";
+        }
+
+        return null;
+    }
+
+    int OthersResearching(Worker hero)
+    {
+        int n = 0;
+        foreach (var h in heroes)
+        {
+            if (h == hero || !ordered.Contains(h)) continue;
+            if (pending.TryGetValue(h, out var o) && o.work == WorkType.Research) n++;
+        }
+        return n;
+    }
 
     // ---------- Списки (власний у кожного героя) ----------
 
@@ -313,9 +386,14 @@ public class OrderPanel : MonoBehaviour
         RefreshAll();
     }
 
-    /// <summary>Де герой буде після підтвердження: обрана зона або поточна, якщо наказу ще немає.</summary>
-    WorkZone EffectiveZone(Worker w) =>
-        ordered.Contains(w) && pending.TryGetValue(w, out var o) ? o.zone : w.CurrentZone;
+    /// <summary>Де герой буде після підтвердження: обрана зона або поточна, якщо наказу ще немає.
+    /// Дослідник від'їжджає й не займає місце в зоні.</summary>
+    WorkZone EffectiveZone(Worker w)
+    {
+        if (ordered.Contains(w) && pending.TryGetValue(w, out var o))
+            return o.work == WorkType.Research ? null : o.zone;
+        return w.CurrentZone;
+    }
 
     int OccupiedByOthers(WorkZone zone, Worker hero)
     {
@@ -348,7 +426,10 @@ public class OrderPanel : MonoBehaviour
             heroSlots[i].SetSelected(i == selected);
             heroSlots[i].SetOrdered(done);
             heroSlots[i].ShowHp(h);
-            heroSlots[i].SetZoneLabel(done && pending.TryGetValue(h, out var o) ? o.ShortLabel : "—");
+            heroSlots[i].SetZoneLabel(done && pending.TryGetValue(h, out var o)
+                ? o.ShortLabel
+                : (ResearchTree.Instance != null && ResearchTree.Instance.HasClaim(h) ? "Researching"
+                   : (wm.IsLockedOnRepair(h) ? "Repairing" : "—")));
         }
 
         Worker hero = selected >= 0 ? heroes[selected] : null;
@@ -371,18 +452,23 @@ public class OrderPanel : MonoBehaviour
             {
                 var opt = zb.Option;
                 bool isSelected = heroOrdered && chosen == opt;
-                int others = OccupiedByOthers(opt.zone, hero);
-                bool hasRoom = others < opt.zone.MaxWorkers;
+                bool isResearch = opt.work == WorkType.Research;
 
-                string reason = opt.zone.GetOrderBlockReason(hero, opt.work);
+                int others = OccupiedByOthers(opt.zone, hero);
+                bool hasRoom = isResearch || others < opt.zone.MaxWorkers;
+
+                string reason = BlockReason(hero, opt);
                 string note = reason;
+
                 if (note == null && opt.work == WorkType.Heal)
                     note = $"needs {opt.zone.HealWorkersRequired} people";
+                if (note == null && isResearch && !isSelected)
+                    note = "pick research next";
 
                 zb.Refresh(isSelected,
-                           others + (isSelected ? 1 : 0),
+                           isResearch ? -1 : others + (isSelected ? 1 : 0),
                            isSelected || (reason == null && hasRoom),
-                           hero.CurrentZone == opt.zone && hero.PreferredWork == opt.Preferred,
+                           !isResearch && hero.CurrentZone == opt.zone && hero.PreferredWork == opt.Preferred,
                            note);
             }
         }

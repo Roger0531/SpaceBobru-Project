@@ -8,34 +8,67 @@ public abstract class Worker : MonoBehaviour
 {
     public static readonly List<Worker> All = new();
 
+    [Header("Identity")]
     [SerializeField] string displayName = "Worker";
-    [SerializeField] float maxHp = 100f;
-    [SerializeField] float hp = 3f;
-    [SerializeField] float helpThreshold = 1f;
-    [SerializeField] int startZoneId = -1;
-
-    [SerializeField, Range(0, 23)] int shiftStart = 6;
-    [SerializeField, Range(0, 24)] int shiftEnd = 22;
-
     [SerializeField] Sprite icon;
 
+    [Header("Health")]
+    [SerializeField] float maxHp = 4f;
+    [SerializeField] float hp = 4f;
+    [Tooltip("Якщо HP не більше за це значення (і більше за 0), працівнику потрібна допомога")]
+    [SerializeField] float helpThreshold = 1f;
+
+    [Header("Work")]
+    [SerializeField] int startZoneId = -1;
     [Tooltip("Телепортувати до стартової зони на початку гри")]
     [SerializeField] bool teleportToStartZone = true;
-    public Sprite Icon => icon;
+    //[SerializeField, Range(0, 23)] int shiftStart = 0;
+    //[SerializeField, Range(0, 24)] int shiftEnd = 16;
+
+    // ---------- Дані ----------
 
     public abstract WorkerRole Role { get; }
+    public abstract float GetWorkHours(WorkType work);
+
     public int Id => (int)Role;
     public string DisplayName => displayName;
+    public Sprite Icon => icon;
+
     public float Hp => hp;
     public float MaxHp => maxHp;
-    public bool IsCritical => hp <= 0f;
-    public bool NeedsHelp => hp > 0f && hp <= helpThreshold;
-    public WorkZone CurrentZone { get; private set; }
+    public bool IsCritical => hp <= 0f;                          // вибув зі строю
+    public bool NeedsHelp => hp > 0f && hp <= helpThreshold;     // на межі: потрібна допомога
 
+    // ефективність від HP не залежить: працює повністю, поки не вибув зі строю
     public float Efficiency => IsCritical ? 0f : 1f;
 
-    public abstract float GetWorkHours(WorkType work);
+    public WorkZone CurrentZone { get; private set; }
+
+    /// <summary>Яку з двох робіт зони виконує працівник (лише для зон із другою роботою).</summary>
     public WorkType PreferredWork { get; private set; } = WorkType.None;
+
+    /// <summary>Що працівник робить зараз за правилами зони.</summary>
+    public WorkType CurrentTask =>
+        CurrentZone != null ? CurrentZone.GetTaskFor(this) : WorkType.None;
+
+    // ---------- Дослідження ----------
+
+    /// <summary>Працівник на дослідженні: його немає в жодній зоні, поки воно не завершиться.</summary>
+    public bool IsResearching =>
+        ResearchTree.Instance != null && ResearchTree.Instance.HasClaim(this);
+
+    /// <summary>Сота, яку працівник зараз досліджує (null, якщо немає).</summary>
+    public ResearchHext CurrentResearch =>
+        ResearchTree.Instance != null ? ResearchTree.Instance.GetClaim(this) : null;
+
+    // ---------- Прогрес роботи ----------
+
+    float progressHours;
+    WorkType progressTask = WorkType.None;
+
+    /// <summary>Працівник розпочав роботу і ще не завершив її, або перебуває на дослідженні.</summary>
+    public bool IsBusy =>
+        (progressTask != WorkType.None && progressHours > 0f) || IsResearching;
 
     /// <summary>
     /// Тривалість одного циклу роботи в годинах:
@@ -52,6 +85,15 @@ public abstract class Worker : MonoBehaviour
         }
     }
 
+    public float WorkProgress
+    {
+        get
+        {
+            float hours = CurrentTaskHours;
+            return hours > 0f ? Mathf.Clamp01(progressHours / hours) : 0f;
+        }
+    }
+
     float TaskHours(WorkType task)
     {
         float baseSkill = WorkManager.Instance != null ? WorkManager.Instance.BaseSkillHours : 4f;
@@ -61,8 +103,58 @@ public abstract class Worker : MonoBehaviour
         return Mathf.Max(0.1f, hours) / Efficiency;
     }
 
+    // ---------- Події ----------
+
+    public event Action<Worker> OnHpChanged;
+    public event Action<Worker, WorkZone> OnZoneChanged;
+    public event Action<Worker, WorkType> OnWorkDone;
+
+    // ---------- Життєвий цикл ----------
+
+    public static Worker FindById(int id) => All.Find(w => w.Id == id);
+
+    protected virtual void OnEnable() => All.Add(this);
+    protected virtual void OnDisable() => All.Remove(this);
+
+    protected virtual void Start()
+    {
+        if (TimeManager.Instance != null)
+            TimeManager.Instance.OnHourTick += HandleHourTick;
+
+        if (startZoneId >= 0)
+            TryAssignToZone(startZoneId, teleport: teleportToStartZone);
+    }
+
+    protected virtual void OnDestroy()
+    {
+        if (TimeManager.Instance != null)
+            TimeManager.Instance.OnHourTick -= HandleHourTick;
+    }
+
+    public bool IsOnShift(int hour)
+    {
+        var tm = TimeManager.Instance;
+        return tm == null || tm.IsWorkHour(hour);
+    }
+
+    /// <summary>Скільки ігрових годин лишилось до відбою (0, якщо зараз не робочий час).</summary>
+    public float HoursUntilBedtime()
+    {
+        var tm = TimeManager.Instance;
+        return tm == null ? 24f : tm.HoursUntilBedtime(tm.Hour);
+    }
+
+    // ---------- Щогодинна робота ----------
+
     void HandleHourTick(int day, int hour)
     {
+        // дослідник у відрядженні: у зонах не працює
+        if (IsResearching)
+        {
+            ResetProgress();
+            return;
+        }
+
         if (CurrentZone == null) return;
 
         if (IsCritical)
@@ -98,50 +190,9 @@ public abstract class Worker : MonoBehaviour
         while (hours > 0f && progressHours >= hours)
         {
             progressHours -= hours;
-            CurrentZone.ApplyWork(task);
+            CurrentZone.ApplyWork(task, this);
             OnWorkDone?.Invoke(this, task);
         }
-    }
-
-    public float WorkProgress
-    {
-        get
-        {
-            float hours = CurrentTaskHours;
-            return hours > 0f ? Mathf.Clamp01(progressHours / hours) : 0f;
-        }
-    }
-
-    /// <summary>Працівник розпочав роботу і ще не завершив її.</summary>
-    public bool IsBusy => progressTask != WorkType.None && progressHours > 0f;
-
-    public event Action<Worker> OnHpChanged;
-    public event Action<Worker, WorkZone> OnZoneChanged;
-    public event Action<Worker, WorkType> OnWorkDone;
-
-    float progressHours;
-    WorkType progressTask = WorkType.None;
-
-    public bool IsOnShift(int hour) =>
-        shiftStart <= shiftEnd
-            ? hour >= shiftStart && hour < shiftEnd
-            : hour >= shiftStart || hour < shiftEnd;
-
-    public static Worker FindById(int id) => All.Find(w => w.Id == id);
-
-    protected virtual void OnEnable() => All.Add(this);
-    protected virtual void OnDisable() => All.Remove(this);
-
-    protected virtual void Start()
-    {
-        TimeManager.Instance.OnHourTick += HandleHourTick;
-        if (startZoneId >= 0) TryAssignToZone(startZoneId, teleport: teleportToStartZone);
-    }
-
-    protected virtual void OnDestroy()
-    {
-        if (TimeManager.Instance != null)
-            TimeManager.Instance.OnHourTick -= HandleHourTick;
     }
 
     void ResetProgress()
@@ -153,17 +204,19 @@ public abstract class Worker : MonoBehaviour
     /// <summary>Викликається зоною, коли працівник вийшов із колайдера.</summary>
     public void CancelWork() => ResetProgress();
 
+    // ---------- Переміщення та призначення ----------
+
     /// <summary>Миттєво переносить працівника у світову позицію.</summary>
     public void TeleportTo(Vector3 position)
     {
         position.z = transform.position.z; // 2D: зберігаємо z працівника
         transform.position = position;
-        Physics.SyncTransforms();
         Physics2D.SyncTransforms();
     }
 
     public void AssignToZone(int zoneId) => TryAssignToZone(zoneId);
 
+    /// <summary>Призначення за Id зони (для стартової зони). Id мають бути унікальними.</summary>
     public bool TryAssignToZone(int zoneId, bool teleport = false, WorkType preferredWork = WorkType.None)
     {
         var zone = WorkZone.FindById(zoneId);
@@ -172,6 +225,15 @@ public abstract class Worker : MonoBehaviour
             Debug.LogWarning($"{displayName}: zone with id {zoneId} not found");
             return false;
         }
+
+        return TryAssignToZone(zone, teleport, preferredWork);
+    }
+
+    /// <param name="teleport">Якщо true, працівник одразу переноситься на вільну позицію зони.</param>
+    /// <param name="preferredWork">Яку з двох робіт зони виконує працівник (наприклад, лікування в науковому блоці).</param>
+    public bool TryAssignToZone(WorkZone zone, bool teleport = false, WorkType preferredWork = WorkType.None)
+    {
+        if (zone == null) return false;
 
         if (zone == CurrentZone)
         {
@@ -207,9 +269,15 @@ public abstract class Worker : MonoBehaviour
         OnZoneChanged?.Invoke(this, null);
     }
 
+    // ---------- Здоров'я ----------
+
     public void ChangeHp(float amount)
     {
         hp = Mathf.Clamp(hp + amount, 0f, maxHp);
+
+        // вибув зі строю: прогрес втрачено (дослідження скасує ResearchTree на найближчій годині)
+        if (IsCritical) ResetProgress();
+
         OnHpChanged?.Invoke(this);
     }
 }

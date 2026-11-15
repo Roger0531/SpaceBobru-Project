@@ -7,6 +7,7 @@ public class LifeSupportModule: ZoneModule
     [SerializeField, Range(0f, 1f)] float brokenProductionMultiplier = 0.5f;
     [SerializeField] float oxygenLossNow = 40f;
     [SerializeField] string brokenParam = "Broken";
+    protected override float OxygenProducedBonus => Bonus(ResearchEffectKind.LifeSupportOxygen);
 
     protected override void Reset()
     {

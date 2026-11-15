@@ -3,9 +3,8 @@ using UnityEngine;
 
 public class LivingModule: ZoneModule
 {
-    [Header("Rest / protection")]
-    [SerializeField, Range(0, 23)] int restStartHour = 22;
-    [SerializeField, Range(0, 23)] int restEndHour = 6;
+    [Header("Night protection")]
+    [Tooltip("Енергія, що списується на відбої (мінус бонус від досліджень)")]
     [SerializeField] float protectionEnergyCost = 25f;
     [SerializeField] float hpLossWithoutProtection = 1f;
     [SerializeField] string protectionParam = "Protection";
@@ -20,25 +19,47 @@ public class LivingModule: ZoneModule
         oxygenUse = 12f;
     }
 
-    protected override void OnHour(int day, int hour)
+    protected override void Start()
     {
-        if (hour == restStartHour) StartRest();
-        else if (hour == restEndHour) EndRest();
+        base.Start();
+
+        if (TimeManager.Instance != null)
+        {
+            TimeManager.Instance.OnBedtime += StartRest;
+            TimeManager.Instance.OnWake += EndRest;
+        }
+    }
+
+    protected override void OnDestroy()
+    {
+        if (TimeManager.Instance != null)
+        {
+            TimeManager.Instance.OnBedtime -= StartRest;
+            TimeManager.Instance.OnWake -= EndRest;
+        }
+
+        base.OnDestroy();
     }
 
     void StartRest()
     {
         var rm = ResourceManager.Instance;
-        bool ok = rm != null && !zone.IsDamaged &&
-                  rm.TrySpendPercent(ResourceType.Energy, protectionEnergyCost);
+        float cost = Mathf.Max(0f, protectionEnergyCost - Bonus(ResearchEffectKind.LivingRestEnergy));
 
-        if (ok)
+        string failure = null;
+        if (rm == null) failure = "ResourceManager not found";
+        else if (zone.IsDamaged) failure = "living module is damaged";
+        else if (!rm.TrySpendPercent(ResourceType.Energy, cost)) failure = $"not enough energy ({cost} needed)";
+
+        if (failure == null)
         {
             ProtectionActive = true;
             SetBool(protectionParam, true);
             OnProtectionChanged?.Invoke(true);
             return;
         }
+
+        Debug.LogWarning($"LivingModule: night protection failed: {failure}");
 
         // захист не ввімкнувся: уся команда втрачає HP
         foreach (var w in Worker.All.ToArray())

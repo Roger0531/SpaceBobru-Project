@@ -43,7 +43,7 @@ public class ZoneOption
             : zone.DisplayName;
 }
 
-public class ZoneButton: MonoBehaviour
+public class ZoneButton : MonoBehaviour
 {
     [SerializeField] Button button;
     [SerializeField] TMP_Text label;
@@ -57,9 +57,14 @@ public class ZoneButton: MonoBehaviour
         button.onClick.AddListener(() => onClick(option));
     }
 
+    /// <param name="occupied">Скільки людей у зоні; від'ємне значення = лічильник не показувати (дослідження).</param>
     public void Refresh(bool isSelected, int occupied, bool interactable, bool isCurrent, string note)
     {
-        string text = $"{Option.Label}  {occupied}/{Option.zone.MaxWorkers}";
+        string text = occupied >= 0
+            ? $"{Option.Label}  {occupied}/{Option.zone.MaxWorkers}"
+            : Option.Label;
+
+        if (isSelected) text += "  (chosen)";
         if (isCurrent) text += "  (current)";
         if (!string.IsNullOrEmpty(note)) text += $"  [{note}]";
 

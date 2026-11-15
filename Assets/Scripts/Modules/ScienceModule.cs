@@ -20,9 +20,11 @@ public class ScienceModule: ZoneModule
     {
         ApplyBaseCycle();
 
+        // кожен, хто зараз досліджує (має обрану соту), витрачає кисень
         int researchers = zone.CountDoing(WorkType.Research);
         if (researchers > 0) AddOxygen(-oxygenPerResearcher * researchers);
 
+        // лікування: витрати на всю групу
         if (zone.CountDoing(WorkType.Heal) >= zone.HealWorkersRequired)
         {
             var rm = ResourceManager.Instance;
@@ -32,11 +34,19 @@ public class ScienceModule: ZoneModule
         }
     }
 
-    // без їжі лікування не йде
     public override bool CanWorkerDo(Worker w, WorkType task)
     {
-        if (task != WorkType.Heal) return true;
-        var rm = ResourceManager.Instance;
-        return rm != null && rm.GetValue(ResourceType.Food) >= healFood;
+        // досліджувати можна лише обрану соту (тривалість рахує Worker через ResearchTree)
+        if (task == WorkType.Research)
+            return ResearchTree.Instance != null && ResearchTree.Instance.HasClaim(w);
+
+        // без їжі лікування не йде
+        if (task == WorkType.Heal)
+        {
+            var rm = ResourceManager.Instance;
+            return rm != null && rm.GetValue(ResourceType.Food) >= healFood;
+        }
+
+        return true;
     }
 }
