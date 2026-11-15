@@ -1,7 +1,17 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-public class WorkManager: MonoBehaviour
+
+[Serializable]
+public class EventMissionLink
+{
+    public string eventName;
+    public string choiceText;
+    public string missionId;
+    public int workerId = -1;
+}
+
+public class WorkManager : MonoBehaviour
 {
     public static WorkManager Instance { get; private set; }
 
@@ -18,8 +28,18 @@ public class WorkManager: MonoBehaviour
     [Tooltip("Характеристика працівника, при якій робота триває рівно стільки, скільки вказано в зоні")]
     [SerializeField, Min(0.1f)] float baseSkillHours = 4f;
 
+    [Header("Rover missions from events")]
+    [Tooltip("Вибір у події відкриває місію ровера. workerId = -1: людину обирають у панелі наказів; 1/2/3: їде одразу")]
+    [SerializeField]
+    List<EventMissionLink> eventMissionLinks = new()
+    {
+        new EventMissionLink { eventName = "", choiceText = "", missionId = "relay",   workerId = -1 },
+        new EventMissionLink { eventName = "", choiceText = "", missionId = "pragyan", workerId = -1 },
+    };
+
     int hoursSinceOrders;
     bool subscribed;
+    EventManager eventManager;
     bool wasTimePausedBefore;
     float prevTimeScale = 1f;
 
@@ -29,11 +49,8 @@ public class WorkManager: MonoBehaviour
     public int HoursUntilNextOrders => Mathf.Max(0, orderIntervalHours - hoursSinceOrders);
 
     public event Action<bool> OnWorkEnabledChanged;
-    /// <summary>Настав час наказів (гра вже на паузі).</summary>
     public event Action OnOrdersTime;
-    /// <summary>Панель наказів треба показати. Список: працівники, яким можна надати наказ.</summary>
     public event Action<List<Worker>> OnOrdersOpened;
-    /// <summary>Накази підтверджено, гра продовжується.</summary>
     public event Action OnOrdersClosed;
 
     void Awake()
@@ -50,6 +67,10 @@ public class WorkManager: MonoBehaviour
             TimeManager.Instance.OnHourTick += HandleHourTick;
             subscribed = true;
         }
+
+        eventManager = EventManager.Instance;
+        if (eventManager != null)
+            eventManager.ChoiceSelected += HandleEventChoice;
     }
 
     void OnDestroy()
@@ -57,7 +78,9 @@ public class WorkManager: MonoBehaviour
         if (subscribed && TimeManager.Instance != null)
             TimeManager.Instance.OnHourTick -= HandleHourTick;
 
-        // щоб гра не лишилась замороженою після перезавантаження сцени
+        if (eventManager != null)
+            eventManager.ChoiceSelected -= HandleEventChoice;
+
         if (OrdersOpen && freezeWholeGame)
             Time.timeScale = prevTimeScale <= 0f ? 1f : prevTimeScale;
 
@@ -84,7 +107,19 @@ public class WorkManager: MonoBehaviour
         OnWorkEnabledChanged?.Invoke(value);
     }
 
-    // ---- Панель наказів і пауза ----
+    void HandleEventChoice(EventInfo e, EventChoice choice)
+    {
+        var mm = Rover.Instance;
+        if (mm == null) return;
+
+        foreach (var link in eventMissionLinks)
+        {
+            if (link.eventName != e.eventName || link.choiceText != choice.ChoiceText) continue;
+
+            mm.Unlock(link.missionId);
+            if (link.workerId > 0) mm.TrySend(link.workerId, link.missionId);
+        }
+    }
 
     public void OpenOrders()
     {
@@ -116,18 +151,15 @@ public class WorkManager: MonoBehaviour
         if (freezeWholeGame)
             Time.timeScale = prevTimeScale <= 0f ? 1f : prevTimeScale;
 
-        // знімаємо паузу лише якщо гра не була на паузі до відкриття панелі
         if (TimeManager.Instance != null && !wasTimePausedBefore)
             TimeManager.Instance.Resume();
 
         OnOrdersClosed?.Invoke();
     }
 
-    // ---- Накази ----
-
-    /// <summary>Працівник, який почав роботу і не завершив її, наказів не отримує.</summary>
     public bool IsAvailableForOrders(Worker w) =>
-        w != null && w.isActiveAndEnabled && !w.IsBusy;
+        w != null && w.isActiveAndEnabled && !w.IsBusy &&
+        (Rover.Instance == null || !Rover.Instance.IsOnMission(w));
 
     public void GetAvailableWorkers(List<Worker> result)
     {
@@ -136,7 +168,6 @@ public class WorkManager: MonoBehaviour
             if (IsAvailableForOrders(w)) result.Add(w);
     }
 
-    /// <summary>Відправляє працівника в зону й миттєво переносить його в координати зони.</summary>
     public bool TryGiveOrder(Worker w, int zoneId)
     {
         if (!IsAvailableForOrders(w)) return false;
