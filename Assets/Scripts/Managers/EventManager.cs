@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 
+[DefaultExecutionOrder(100)]
 public class EventManager : MonoBehaviour
 {
     public static EventManager Instance { get; private set; }
@@ -60,6 +61,9 @@ public class EventManager : MonoBehaviour
 
     // Чи ми самі поставили час на паузу під час вибору
     private bool pausedByChoice;
+
+    public event System.Action<EventInfo> EventShown;
+    public bool IsBusy => busy;
 
     private void Awake()
     {
@@ -139,10 +143,10 @@ public class EventManager : MonoBehaviour
     {
         // Панель з кнопкою OK: можна закрити
         OpenPanel1(e.eventName, e.eventDescription, closable: true);
+        EventShown?.Invoke(e);
 
         yield return new WaitForSeconds(panelDelay);
         yield return WaitForOk();
-
         e.isCompleted = true;
     }
 
@@ -150,6 +154,7 @@ public class EventManager : MonoBehaviour
     {
         // Ігровий час стоїть, поки гравець не зробить вибір
         PauseTimeForChoice();
+        EventShown?.Invoke(e);
 
         txtEventNamePanel2.text = e.eventName;
 

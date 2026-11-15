@@ -95,16 +95,23 @@ public class ResourceManager : MonoBehaviour
 
     void HandleHourTick(int day, int hour)
     {
-        int crew = Worker.All.Count;
-
-        foreach (var r in resources)
-        {
-            float delta = r.changePerHour - r.perCrewPerHour * crew;
-            if (delta != 0f) Change(r.type, delta);
-        }
-
         foreach (var w in Worker.All)
             UpdateMeal(w);
+    }
+
+    /// <summary>Змінює ресурс на відсотки від максимуму (для енергії й кисню 1% = 1 одиниця).</summary>
+    public void ChangePercent(ResourceType type, float percentPoints)
+    {
+        var r = Get(type);
+        if (r == null) return;
+        Change(type, r.max * percentPoints / 100f);
+    }
+
+    public bool TrySpendPercent(ResourceType type, float percentPoints)
+    {
+        var r = Get(type);
+        if (r == null) return false;
+        return TrySpend(type, r.max * percentPoints / 100f);
     }
 
     void UpdateMeal(Worker w)

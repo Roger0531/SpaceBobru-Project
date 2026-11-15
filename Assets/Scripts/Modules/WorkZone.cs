@@ -4,6 +4,7 @@ using UnityEngine;
 
 //3) додати до типів роботу solar panel(тут відбувається чистка сонячних панелей) і також energy(тут відбувається ремонт кабеля) також треба 
 //public enum ZoneType { DistributionBlock, LifeSupport, Food, Science, Living }
+public enum ZoneType { Core, LifeSupport, Food, Science, Living, Solar }
 public enum WorkType { None, Repair, Heal, Research, Produce }
 
 public static class Research
@@ -16,6 +17,14 @@ public static class Research
         Points += amount;
         OnChanged?.Invoke(Points);
     }
+
+    public static bool TrySpend(float amount)
+    {
+        if (amount > Points) return false;
+        Points -= amount;
+        OnChanged?.Invoke(Points);
+        return true;
+    }
 }
 
 public class WorkZone : MonoBehaviour
@@ -25,10 +34,14 @@ public class WorkZone : MonoBehaviour
     [Header("Identity")]
     [SerializeField] int id;
     [SerializeField] string displayName = "Module";
-    //[SerializeField] ZoneType type;
+    [SerializeField] ZoneType type;
 
     [Header("Work")]
     [SerializeField] WorkType mainWork = WorkType.None;
+    [Tooltip("Друга робота, що йде одночасно з основною. Зараз підтримується лише Heal (групова робота).")]
+    [SerializeField] WorkType secondaryWork = WorkType.None;
+    [Tooltip("Скільки людей потрібно для лікування (Heal)")]
+    [SerializeField, Min(1)] int healWorkersRequired = 1;
     [Tooltip("Only for Main Work = Produce: which resource this zone produces")]
     [SerializeField] ResourceType producedResource = ResourceType.Food;
     [SerializeField, Min(1)] int maxWorkers = 3;
@@ -38,49 +51,36 @@ public class WorkZone : MonoBehaviour
     [SerializeField, Min(0.1f)] float workHours = 4f;
 
     [Header("Position for workers")]
-    [Tooltip("Увімкнено: використовувати координати нижче. Вимкнено: позиція самого об'єкта зони.")]
     [SerializeField] bool useManualPosition = true;
-    [Tooltip("Світові координати, куди телепортується працівник після наказу. Мають бути всередині Trigger-колайдера зони.")]
     [SerializeField] Vector3 manualPosition;
 
     [Header("Conditions to work")]
-    [Tooltip("Працювати лише коли працівник стоїть у колайдері зони")]
     [SerializeField] bool requireWorkerInside = true;
-    [Tooltip("Працювати лише коли в WorkManager увімкнено workEnabled")]
     [SerializeField] bool requireWorkEnabled = true;
 
     [Header("Condition")]
     [SerializeField] float maxCondition = 100f;
     [SerializeField] float condition = 100f;
 
-    readonly HashSet<Worker> workersInside = new();
+    readonly List<Worker> inside = new();   // у порядку входу в колайдер
+    readonly List<Worker> buffer = new();
+    ZoneModule module;
 
     public int Id => id;
     public string DisplayName => displayName;
-    //public ZoneType Type => type;
+    public ZoneType Type => type;
     public float Condition => condition;
     public float MaxCondition => maxCondition;
     public float WorkHours => workHours;
+    public int HealWorkersRequired => healWorkersRequired;
     public bool IsBroken => condition <= 0f;
     public bool IsDamaged => condition < maxCondition;
+    public ZoneModule Module => module;
 
-    /// <summary>Куди потрапляє працівник після наказу.</summary>
     public Vector3 WorkPosition => useManualPosition ? manualPosition : transform.position;
 
-    /// <summary>Чи дозволив WorkManager роботу.</summary>
     bool WorkEnabledOk =>
         !requireWorkEnabled || (WorkManager.Instance != null && WorkManager.Instance.WorkEnabled);
-
-    public WorkType CurrentTask
-    {
-        get
-        {
-            if (!WorkEnabledOk) return WorkType.None;
-            if (IsDamaged) return WorkType.Repair;
-            if (mainWork == WorkType.Produce && IsStorageFull) return WorkType.None;
-            return mainWork;
-        }
-    }
 
     bool IsStorageFull =>
         ResourceManager.Instance != null && ResourceManager.Instance.IsFull(producedResource);
@@ -93,14 +93,14 @@ public class WorkZone : MonoBehaviour
 
     public static WorkZone FindById(int id) => All.Find(z => z.id == id);
 
+    void Awake() => module = GetComponent<ZoneModule>();
     void OnEnable() => All.Add(this);
     void OnDisable() => All.Remove(this);
 
     void Start()
     {
-        // підказка, якщо координати лежать поза колайдером: працівник там не зможе працювати
-        if (requireWorkerInside && TryGetComponent<Collider>(out var col) &&
-            !col.bounds.Contains(WorkPosition))
+        if (requireWorkerInside && TryGetComponent<Collider2D>(out var col) &&
+            !col.OverlapPoint(WorkPosition))
         {
             Debug.LogWarning($"{displayName}: WorkPosition {WorkPosition} is outside the zone collider, " +
                              "workers teleported there will not count as present.", this);
@@ -108,19 +108,19 @@ public class WorkZone : MonoBehaviour
     }
 
     // ---- Присутність у колайдері ----
-    public int WorkersInside => workersInside.Count;
+    public int WorkersInside => inside.Count;
 
     public bool IsWorkerPresent(Worker w)
     {
         if (!requireWorkerInside) return true;
-        workersInside.RemoveWhere(x => x == null || !x.isActiveAndEnabled);
-        return workersInside.Contains(w);
+        inside.RemoveAll(x => x == null || !x.isActiveAndEnabled);
+        return inside.Contains(w);
     }
 
     void OnTriggerEnter2D(Collider2D other)
     {
         var w = other.GetComponentInParent<Worker>();
-        if (w != null) workersInside.Add(w);
+        if (w != null && !inside.Contains(w)) inside.Add(w);
     }
 
     void OnTriggerExit2D(Collider2D other)
@@ -128,9 +128,80 @@ public class WorkZone : MonoBehaviour
         var w = other.GetComponentInParent<Worker>();
         if (w == null) return;
 
-        workersInside.Remove(w);
+        inside.Remove(w);
         if (w.CurrentZone == this) w.CancelWork();
     }
+
+    /// <summary>Призначені сюди працівники, які реально стоять у зоні (у порядку входу).</summary>
+    public void GetParticipants(List<Worker> result)
+    {
+        result.Clear();
+        if (requireWorkerInside)
+        {
+            inside.RemoveAll(x => x == null || !x.isActiveAndEnabled);
+            foreach (var w in inside)
+                if (w.CurrentZone == this && !w.IsCritical) result.Add(w);
+        }
+        else
+        {
+            foreach (var w in Worker.All)
+                if (w.CurrentZone == this && !w.IsCritical) result.Add(w);
+        }
+    }
+
+    // ---- Яка робота зараз у працівника ----
+    bool HasWork(WorkType t) => mainWork == t || secondaryWork == t;
+
+    public WorkType CurrentTask => GetTaskFor(null);
+
+    public WorkType GetTaskFor(Worker w)
+    {
+        if (!WorkEnabledOk) return WorkType.None;
+        if (IsDamaged) return WorkType.Repair;
+
+        // групове лікування: перші N працівників у зоні, якщо є кого лікувати
+        if (HasWork(WorkType.Heal) && IsHealer(w)) return WorkType.Heal;
+
+        WorkType task = mainWork != WorkType.Heal ? mainWork : secondaryWork;
+        if (task == WorkType.Heal) return WorkType.None;
+        if (task == WorkType.Produce && IsStorageFull) return WorkType.None;
+        return task;
+    }
+
+    bool IsHealer(Worker w)
+    {
+        if (w == null || !Worker.All.Exists(x => x.Hp < x.MaxHp)) return false;
+
+        GetParticipants(buffer);
+        if (buffer.Count < healWorkersRequired) return false;
+
+        int idx = buffer.IndexOf(w);
+        return idx >= 0 && idx < healWorkersRequired;
+    }
+
+    /// <summary>Скільки працівників зараз виконують цю роботу (на зміні, мають право її виконувати).</summary>
+    public int CountDoing(WorkType task)
+    {
+        var list = new List<Worker>();
+        GetParticipants(list);
+
+        int hour = TimeManager.Instance != null ? TimeManager.Instance.Hour : 0;
+        int n = 0;
+        foreach (var w in list)
+        {
+            if (!w.IsOnShift(hour)) continue;
+            if (GetTaskFor(w) != task || !CanWorkerDo(w, task)) continue;
+            n++;
+        }
+        return n;
+    }
+
+    // ---- Правила від модуля ----
+    public bool CanWorkerDo(Worker w, WorkType task) =>
+        module == null || module.CanWorkerDo(w, task);
+
+    public float AdjustTaskHours(Worker w, WorkType task, float hours) =>
+        module == null ? hours : module.AdjustTaskHours(w, task, hours);
 
     // ---- Результат роботи ----
     public void ApplyWork(WorkType work)
@@ -138,10 +209,10 @@ public class WorkZone : MonoBehaviour
         switch (work)
         {
             case WorkType.Repair:
-                ChangeCondition(amountPerTask);
+                RepairFully();
                 break;
             case WorkType.Heal:
-                HealMostInjured(amountPerTask);
+                HealMostInjured(amountPerTask / Mathf.Max(1, healWorkersRequired));
                 break;
             case WorkType.Research:
                 Research.Add(amountPerTask);
@@ -165,9 +236,15 @@ public class WorkZone : MonoBehaviour
         if (patient != null) patient.ChangeHp(amount);
     }
 
-    public void ChangeCondition(float amount)
+    // ---- Стан ----
+    public void Break() => SetCondition(0f);
+    public void RepairFully() => SetCondition(maxCondition);
+
+    public void ChangeCondition(float amount) => SetCondition(condition + amount);
+
+    void SetCondition(float value)
     {
-        condition = Mathf.Clamp(condition + amount, 0f, maxCondition);
+        condition = Mathf.Clamp(value, 0f, maxCondition);
         OnConditionChanged?.Invoke(this);
     }
 
@@ -182,7 +259,7 @@ public class WorkZone : MonoBehaviour
     void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(WorkPosition, 0.4f);
+        Gizmos.DrawWireSphere(WorkPosition, 0.1f);
         Gizmos.DrawLine(transform.position, WorkPosition);
     }
 }

@@ -11,6 +11,7 @@ public abstract class Worker : MonoBehaviour
     [SerializeField] string displayName = "Worker";
     [SerializeField] float maxHp = 100f;
     [SerializeField] float hp = 3f;
+    [SerializeField] float helpThreshold = 1f;
     [SerializeField] int startZoneId = -1;
 
     [SerializeField, Range(0, 23)] int shiftStart = 6;
@@ -22,9 +23,10 @@ public abstract class Worker : MonoBehaviour
     public float Hp => hp;
     public float MaxHp => maxHp;
     public bool IsCritical => hp <= 0f;
+    public bool NeedsHelp => hp > 0f && hp <= helpThreshold;
     public WorkZone CurrentZone { get; private set; }
 
-    public float Efficiency => IsCritical ? 0f : (hp < maxHp * 0.5f ? 0.5f : 1f);
+    public float Efficiency => IsCritical ? 0f : 1f;
 
     public abstract float GetWorkHours(WorkType work);
 
@@ -38,12 +40,59 @@ public abstract class Worker : MonoBehaviour
         get
         {
             if (CurrentZone == null || Efficiency <= 0f) return 0f;
-            var task = CurrentZone.CurrentTask;
-            if (task == WorkType.None) return 0f;
+            var task = CurrentZone.GetTaskFor(this);
+            return task == WorkType.None ? 0f : TaskHours(task);
+        }
+    }
 
-            float baseSkill = WorkManager.Instance != null ? WorkManager.Instance.BaseSkillHours : 4f;
-            float factor = GetWorkHours(task) / Mathf.Max(0.1f, baseSkill);
-            return Mathf.Max(0.1f, CurrentZone.WorkHours * factor) / Efficiency;
+    float TaskHours(WorkType task)
+    {
+        float baseSkill = WorkManager.Instance != null ? WorkManager.Instance.BaseSkillHours : 4f;
+        float factor = GetWorkHours(task) / Mathf.Max(0.1f, baseSkill);
+        float hours = CurrentZone.WorkHours * factor;
+        hours = CurrentZone.AdjustTaskHours(this, task, hours);
+        return Mathf.Max(0.1f, hours) / Efficiency;
+    }
+
+    void HandleHourTick(int day, int hour)
+    {
+        if (CurrentZone == null) return;
+
+        if (IsCritical)
+        {
+            ResetProgress();
+            return;
+        }
+
+        if (!IsOnShift(hour)) return;
+
+        if (!CurrentZone.IsWorkerPresent(this))
+        {
+            ResetProgress();
+            return;
+        }
+
+        var task = CurrentZone.GetTaskFor(this);
+        if (task == WorkType.None || !CurrentZone.CanWorkerDo(this, task))
+        {
+            ResetProgress();
+            return;
+        }
+
+        if (task != progressTask)
+        {
+            progressTask = task;
+            progressHours = 0f;
+        }
+
+        progressHours += 1f;
+
+        float hours = TaskHours(task);
+        while (hours > 0f && progressHours >= hours)
+        {
+            progressHours -= hours;
+            CurrentZone.ApplyWork(task);
+            OnWorkDone?.Invoke(this, task);
         }
     }
 
@@ -86,51 +135,6 @@ public abstract class Worker : MonoBehaviour
     {
         if (TimeManager.Instance != null)
             TimeManager.Instance.OnHourTick -= HandleHourTick;
-    }
-
-    void HandleHourTick(int day, int hour)
-    {
-        if (CurrentZone == null) return;
-
-        // критичний стан: роботу кинуто, щоб працівник не "застряг" у статусі зайнятого
-        if (IsCritical)
-        {
-            ResetProgress();
-            return;
-        }
-
-        if (!IsOnShift(hour)) return;
-
-        // працівник має стояти в колайдері своєї зони
-        if (!CurrentZone.IsWorkerPresent(this))
-        {
-            ResetProgress();
-            return;
-        }
-
-        // CurrentTask = None, якщо WorkManager ще не дозволив роботу
-        var task = CurrentZone.CurrentTask;
-        if (task == WorkType.None)
-        {
-            ResetProgress();
-            return;
-        }
-
-        if (task != progressTask)
-        {
-            progressTask = task;
-            progressHours = 0f;
-        }
-
-        progressHours += 1f;
-
-        float hours = CurrentTaskHours;
-        while (hours > 0f && progressHours >= hours)
-        {
-            progressHours -= hours;
-            CurrentZone.ApplyWork(task);
-            OnWorkDone?.Invoke(this, task);
-        }
     }
 
     void ResetProgress()

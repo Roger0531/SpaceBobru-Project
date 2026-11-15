@@ -42,6 +42,7 @@ public class WorkManager : MonoBehaviour
     EventManager eventManager;
     bool wasTimePausedBefore;
     float prevTimeScale = 1f;
+    bool ordersPending;   // настав час наказів, але панель ще чекає закриття панелей подій
 
     public bool WorkEnabled => workEnabled;
     public bool OrdersOpen { get; private set; }
@@ -95,8 +96,19 @@ public class WorkManager : MonoBehaviour
         if (hoursSinceOrders >= orderIntervalHours)
         {
             hoursSinceOrders = 0;
-            OpenOrders();
+            ordersPending = true;
         }
+    }
+
+    void LateUpdate()
+    {
+        if (!ordersPending || OrdersOpen) return;
+
+        var ev = EventManager.Instance;
+        if (ev != null && ev.IsBusy) return; // чекаємо, поки закриються панелі подій
+
+        ordersPending = false;
+        OpenOrders();
     }
 
     public void SetWorkEnabled(bool value)
