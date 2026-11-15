@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
-public class OrderPanel :MonoBehaviour
+public class OrderPanel : MonoBehaviour
 {
     [SerializeField] GameObject panel;
     [SerializeField] Transform rowsParent;
@@ -35,10 +35,14 @@ public class OrderPanel :MonoBehaviour
     {
         ClearRows();
 
+        var missions = Rover.Instance != null
+            ? Rover.Instance.GetAvailableMissions()
+            : null;
+
         foreach (var w in workers)
         {
             var row = Instantiate(rowPrefab, rowsParent);
-            row.Setup(w, WorkZone.All);
+            row.Setup(w, WorkZone.All, missions);
             rows.Add(row);
         }
 
@@ -49,6 +53,14 @@ public class OrderPanel :MonoBehaviour
     {
         foreach (var row in rows)
         {
+            var mission = row.SelectedMission;
+            if (mission != null)
+            {
+                if (Rover.Instance != null)
+                    Rover.Instance.TrySend(row.Worker, mission.id);
+                continue;
+            }
+
             var zone = row.SelectedZone;
             if (zone != null && zone != row.Worker.CurrentZone)
                 wm.TryGiveOrder(row.Worker, zone.Id);

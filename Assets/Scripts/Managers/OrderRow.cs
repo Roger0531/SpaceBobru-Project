@@ -2,22 +2,40 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
-public class OrderRow: MonoBehaviour
+public class OrderRow : MonoBehaviour
 {
     [SerializeField] TMP_Text nameLabel;
     [SerializeField] TMP_Dropdown zoneDropdown;
 
     List<WorkZone> zones;
+    List<Mission> missions;
 
     public Worker Worker { get; private set; }
 
-    public WorkZone SelectedZone =>
-        zones != null && zones.Count > 0 ? zones[zoneDropdown.value] : null;
+    public WorkZone SelectedZone
+    {
+        get
+        {
+            int i = zoneDropdown.value;
+            return zones != null && i < zones.Count ? zones[i] : null;
+        }
+    }
 
-    public void Setup(Worker worker, List<WorkZone> zoneList)
+    public Mission SelectedMission
+    {
+        get
+        {
+            if (missions == null || zones == null) return null;
+            int i = zoneDropdown.value - zones.Count;
+            return i >= 0 && i < missions.Count ? missions[i] : null;
+        }
+    }
+
+    public void Setup(Worker worker, List<WorkZone> zoneList, List<Mission> missionList = null)
     {
         Worker = worker;
         zones = new List<WorkZone>(zoneList);
+        missions = missionList != null ? new List<Mission>(missionList) : new List<Mission>();
         nameLabel.text = $"{worker.DisplayName} ({worker.Role})";
 
         var options = new List<string>();
@@ -27,6 +45,9 @@ public class OrderRow: MonoBehaviour
             options.Add(zones[i].DisplayName);
             if (zones[i] == worker.CurrentZone) selected = i;
         }
+
+        foreach (var m in missions)
+            options.Add($"Rover: {m.displayName} ({m.durationHours}h)");
 
         zoneDropdown.ClearOptions();
         zoneDropdown.AddOptions(options);
