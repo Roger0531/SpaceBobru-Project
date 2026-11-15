@@ -18,6 +18,9 @@ public abstract class Worker : MonoBehaviour
     [SerializeField, Range(0, 24)] int shiftEnd = 22;
 
     [SerializeField] Sprite icon;
+
+    [Tooltip("Телепортувати до стартової зони на початку гри")]
+    [SerializeField] bool teleportToStartZone = true;
     public Sprite Icon => icon;
 
     public abstract WorkerRole Role { get; }
@@ -32,6 +35,7 @@ public abstract class Worker : MonoBehaviour
     public float Efficiency => IsCritical ? 0f : 1f;
 
     public abstract float GetWorkHours(WorkType work);
+    public WorkType PreferredWork { get; private set; } = WorkType.None;
 
     /// <summary>
     /// Тривалість одного циклу роботи в годинах:
@@ -131,7 +135,7 @@ public abstract class Worker : MonoBehaviour
     protected virtual void Start()
     {
         TimeManager.Instance.OnHourTick += HandleHourTick;
-        if (startZoneId >= 0) AssignToZone(startZoneId);
+        if (startZoneId >= 0) TryAssignToZone(startZoneId, teleport: teleportToStartZone);
     }
 
     protected virtual void OnDestroy()
@@ -160,8 +164,7 @@ public abstract class Worker : MonoBehaviour
 
     public void AssignToZone(int zoneId) => TryAssignToZone(zoneId);
 
-    /// <param name="teleport">Якщо true, працівник одразу переноситься в WorkPosition нової зони.</param>
-    public bool TryAssignToZone(int zoneId, bool teleport = false)
+    public bool TryAssignToZone(int zoneId, bool teleport = false, WorkType preferredWork = WorkType.None)
     {
         var zone = WorkZone.FindById(zoneId);
         if (zone == null)
@@ -172,7 +175,12 @@ public abstract class Worker : MonoBehaviour
 
         if (zone == CurrentZone)
         {
-            // той самий наказ: лише переносимо, якщо працівник пішов з місця
+            // та сама зона: якщо змінилась робота, скидаємо прогрес
+            if (PreferredWork != preferredWork)
+            {
+                PreferredWork = preferredWork;
+                ResetProgress();
+            }
             if (teleport) TeleportTo(zone.ReserveWorkPosition(this));
             return true;
         }
@@ -184,6 +192,7 @@ public abstract class Worker : MonoBehaviour
         }
 
         CurrentZone = zone;
+        PreferredWork = preferredWork;
         ResetProgress();
         if (teleport) TeleportTo(zone.ReserveWorkPosition(this));
         OnZoneChanged?.Invoke(this, zone);
@@ -193,6 +202,7 @@ public abstract class Worker : MonoBehaviour
     public void Unassign()
     {
         CurrentZone = null;
+        PreferredWork = WorkType.None;
         ResetProgress();
         OnZoneChanged?.Invoke(this, null);
     }
