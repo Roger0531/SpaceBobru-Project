@@ -35,7 +35,7 @@ public class TimeManager : MonoBehaviour
     {
         if (IsPaused) return;
         timer += Time.deltaTime;
-        while (timer >= secondsPerHour)
+        while (timer >= secondsPerHour && !IsPaused)
         {
             timer -= secondsPerHour;
             AdvanceHour();

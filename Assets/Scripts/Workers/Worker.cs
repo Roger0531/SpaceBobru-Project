@@ -28,6 +28,11 @@ public abstract class Worker : MonoBehaviour
 
     public abstract float GetWorkHours(WorkType work);
 
+    /// <summary>
+    /// Тривалість одного циклу роботи в годинах:
+    /// час зони * (характеристика працівника / базове значення) / ефективність.
+    /// Характеристика = 4 -> рівно час зони, 8 -> вдвічі довше.
+    /// </summary>
     public float CurrentTaskHours
     {
         get
@@ -35,7 +40,10 @@ public abstract class Worker : MonoBehaviour
             if (CurrentZone == null || Efficiency <= 0f) return 0f;
             var task = CurrentZone.CurrentTask;
             if (task == WorkType.None) return 0f;
-            return Mathf.Max(0.1f, GetWorkHours(task)) / Efficiency;
+
+            float baseSkill = WorkManager.Instance != null ? WorkManager.Instance.BaseSkillHours : 4f;
+            float factor = GetWorkHours(task) / Mathf.Max(0.1f, baseSkill);
+            return Mathf.Max(0.1f, CurrentZone.WorkHours * factor) / Efficiency;
         }
     }
 
@@ -48,6 +56,9 @@ public abstract class Worker : MonoBehaviour
         }
     }
 
+    /// <summary>Працівник розпочав роботу і ще не завершив її.</summary>
+    public bool IsBusy => progressTask != WorkType.None && progressHours > 0f;
+
     public event Action<Worker> OnHpChanged;
     public event Action<Worker, WorkZone> OnZoneChanged;
     public event Action<Worker, WorkType> OnWorkDone;
@@ -59,7 +70,6 @@ public abstract class Worker : MonoBehaviour
         shiftStart <= shiftEnd
             ? hour >= shiftStart && hour < shiftEnd
             : hour >= shiftStart || hour < shiftEnd;
-
 
     public static Worker FindById(int id) => All.Find(w => w.Id == id);
 
@@ -80,16 +90,31 @@ public abstract class Worker : MonoBehaviour
 
     void HandleHourTick(int day, int hour)
     {
-        if (CurrentZone == null || IsCritical) return;
+        if (CurrentZone == null) return;
+
+        // критичний стан: роботу кинуто, щоб працівник не "застряг" у статусі зайнятого
+        if (IsCritical)
+        {
+            ResetProgress();
+            return;
+        }
+
         if (!IsOnShift(hour)) return;
 
+        // працівник має стояти в колайдері своєї зони
+        if (!CurrentZone.IsWorkerPresent(this))
+        {
+            ResetProgress();
+            return;
+        }
+
+        // CurrentTask = None, якщо WorkManager ще не дозволив роботу
         var task = CurrentZone.CurrentTask;
         if (task == WorkType.None)
         {
             ResetProgress();
             return;
         }
-
 
         if (task != progressTask)
         {
@@ -114,10 +139,22 @@ public abstract class Worker : MonoBehaviour
         progressTask = WorkType.None;
     }
 
+    /// <summary>Викликається зоною, коли працівник вийшов із колайдера.</summary>
+    public void CancelWork() => ResetProgress();
+
+    /// <summary>Миттєво переносить працівника у світову позицію.</summary>
+    public void TeleportTo(Vector3 position)
+    {
+        position.z = transform.position.z; // 2D: зберігаємо z працівника
+        transform.position = position;
+        Physics.SyncTransforms();
+        Physics2D.SyncTransforms();
+    }
 
     public void AssignToZone(int zoneId) => TryAssignToZone(zoneId);
 
-    public bool TryAssignToZone(int zoneId)
+    /// <param name="teleport">Якщо true, працівник одразу переноситься в WorkPosition нової зони.</param>
+    public bool TryAssignToZone(int zoneId, bool teleport = false)
     {
         var zone = WorkZone.FindById(zoneId);
         if (zone == null)
@@ -125,7 +162,14 @@ public abstract class Worker : MonoBehaviour
             Debug.LogWarning($"{displayName}: zone with id {zoneId} not found");
             return false;
         }
-        if (zone == CurrentZone) return true;
+
+        if (zone == CurrentZone)
+        {
+            // той самий наказ: лише переносимо, якщо працівник пішов з місця
+            if (teleport) TeleportTo(zone.WorkPosition);
+            return true;
+        }
+
         if (zone.IsFull)
         {
             Debug.LogWarning($"{displayName}: zone '{zone.DisplayName}' is full");
@@ -134,6 +178,7 @@ public abstract class Worker : MonoBehaviour
 
         CurrentZone = zone;
         ResetProgress();
+        if (teleport) TeleportTo(zone.WorkPosition);
         OnZoneChanged?.Invoke(this, zone);
         return true;
     }

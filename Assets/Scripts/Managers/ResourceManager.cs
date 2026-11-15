@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
-public enum ResourceType { Energy, Oxygen, Food }
+public enum ResourceType { Energy, Oxygen, Food, None }
 
 [Serializable]
 public class Resource
