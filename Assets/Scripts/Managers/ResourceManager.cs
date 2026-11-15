@@ -35,6 +35,7 @@ public class ResourceManager : MonoBehaviour
     int lastEnergyStep = -1;
     [SerializeField] Animator foodAnimator;
     int lastFoodStep = -1;
+    [SerializeField] OxygenBar oxygenBar;
     //[SerializeField] Animator oxygenAnimator;
     //[SerializeField] TextMeshProUGUI txtOxygenCount;
     //int lastOxygenStep = -1;
@@ -58,6 +59,7 @@ public class ResourceManager : MonoBehaviour
         TimeManager.Instance.OnHourTick += HandleHourTick;
         UpdateEnergyAnimation(GetValue(ResourceType.Energy));
         UpdateFoodAnimation(GetValue(ResourceType.Food));
+        UpdateOxygenBar(GetValue(ResourceType.Oxygen), Get(ResourceType.Oxygen).max);
         //UpdateOxygenAnimation(GetValue(ResourceType.Oxygen));
     }
 
@@ -85,6 +87,13 @@ public class ResourceManager : MonoBehaviour
         lastFoodStep = step;
 
         foodAnimator.Play(step.ToString());
+    }
+    void UpdateOxygenBar(float value, float max)
+    {
+        if (oxygenBar == null) return;
+
+        float percent = (value / max) * 100f;
+        oxygenBar.SetOxygen(percent);
     }
 
     void OnDestroy()
@@ -151,6 +160,8 @@ public class ResourceManager : MonoBehaviour
             UpdateEnergyAnimation(r.value);
         else if (type == ResourceType.Food)
             UpdateFoodAnimation(r.value);
+        else if (type == ResourceType.Oxygen)
+            UpdateOxygenBar(r.value, r.max);
 
         if (r.value <= 0f && amount < 0f)
             OnResourceEmpty?.Invoke(type);

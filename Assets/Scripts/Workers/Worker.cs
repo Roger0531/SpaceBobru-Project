@@ -17,6 +17,9 @@ public abstract class Worker : MonoBehaviour
     [SerializeField, Range(0, 23)] int shiftStart = 6;
     [SerializeField, Range(0, 24)] int shiftEnd = 22;
 
+    [SerializeField] Sprite icon;
+    public Sprite Icon => icon;
+
     public abstract WorkerRole Role { get; }
     public int Id => (int)Role;
     public string DisplayName => displayName;
@@ -170,7 +173,7 @@ public abstract class Worker : MonoBehaviour
         if (zone == CurrentZone)
         {
             // той самий наказ: лише переносимо, якщо працівник пішов з місця
-            if (teleport) TeleportTo(zone.WorkPosition);
+            if (teleport) TeleportTo(zone.ReserveWorkPosition(this));
             return true;
         }
 
@@ -182,7 +185,7 @@ public abstract class Worker : MonoBehaviour
 
         CurrentZone = zone;
         ResetProgress();
-        if (teleport) TeleportTo(zone.WorkPosition);
+        if (teleport) TeleportTo(zone.ReserveWorkPosition(this));
         OnZoneChanged?.Invoke(this, zone);
         return true;
     }
