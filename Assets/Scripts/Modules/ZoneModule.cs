@@ -1,9 +1,12 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 [RequireComponent(typeof(WorkZone))]
 public class ZoneModule: MonoBehaviour
 {
     protected enum FaultState { None, Awaiting, Repairing, Penalized }
+
+    public static readonly List<ZoneModule> All = new();
 
     [Header("Cycle")]
     [Tooltip("Раз на скільки ігрових годин блок витрачає/виробляє ресурси (Hour % cycleHours == 0)")]
@@ -38,6 +41,9 @@ public class ZoneModule: MonoBehaviour
     protected virtual void Reset() { }
 
     protected virtual void Awake() => zone = GetComponent<WorkZone>();
+
+    protected virtual void OnEnable() => All.Add(this);
+    protected virtual void OnDisable() => All.Remove(this);
 
     protected virtual void Start()
     {
@@ -94,30 +100,73 @@ public class ZoneModule: MonoBehaviour
 
     protected virtual void OnPenaltyDay() { }
 
+    // бонуси від досліджень
+    protected virtual float EnergyProducedBonus => 0f;
+    protected virtual float OxygenProducedBonus => 0f;
+    public virtual float ProductionBonus => 0f;
+
+    protected static float Bonus(ResearchEffectKind kind) =>
+        ResearchTree.Instance != null ? ResearchTree.Instance.GetBonus(kind) : 0f;
+
     /// <summary>Базові витрати/вироблення блоку за один цикл.</summary>
     protected void ApplyBaseCycle()
     {
-        float energy = energyProduced * energyProductionMul - energyUse;
-        float oxygen = oxygenProduced * oxygenProductionMul - oxygenUse;
+        float energy = (energyProduced + EnergyProducedBonus) * energyProductionMul - energyUse;
+        float oxygen = (oxygenProduced + OxygenProducedBonus) * oxygenProductionMul - oxygenUse;
         if (energy != 0f) AddEnergy(energy);
         if (oxygen != 0f) AddOxygen(oxygen);
     }
 
     // ---------- Події ----------
 
+    public static bool AnyAvoids(EventInfo e)
+    {
+        foreach (var m in All)
+            if (m != null && m.TryAvoidEvent(e)) return true;
+        return false;
+    }
+
+    /// <summary>Модуль може скасувати подію (наприклад, завдяки дослідженню).</summary>
+    protected virtual bool TryAvoidEvent(EventInfo e) => false;
+
     protected virtual void HandleEventShown(EventInfo e)
     {
         if (eventId < 0 || e.eventID != eventId) return;
+
         BeginFault();
+
+        // подія без вибору: якщо ремонтувати може лише один спеціаліст, він їде одразу
+        if (!HasChoices(e)) TryAutoRepair(force: false);
     }
 
     protected virtual void HandleChoiceSelected(EventInfo e, EventChoice c)
     {
         if (eventId < 0 || e.eventID != eventId) return;
-        if (ChoiceNumber(e, c) != repairChoiceNumber) DeclineRepair();
+
+        if (ChoiceNumber(e, c) == repairChoiceNumber)
+            TryAutoRepair(force: true);   // обрано ремонт: найкращий ремонтник їде одразу
+        else
+            DeclineRepair();
     }
 
+    protected static bool HasChoices(EventInfo e) => e.choices != null && e.choices.Count > 0;
+
     protected static int ChoiceNumber(EventInfo e, EventChoice c) => e.choices.IndexOf(c) + 1;
+
+    /// <summary>
+    /// Відправляє ремонтника одразу, не чекаючи панелі наказів.
+    /// force = true: найкращого вільного (обрано відповідь «ремонтувати»);
+    /// force = false: лише якщо ремонтувати цю зону може одна роль.
+    /// </summary>
+    protected bool TryAutoRepair(bool force)
+    {
+        var wm = WorkManager.Instance;
+        if (wm == null || !wm.TryDispatchRepair(zone, onlyIfExclusive: !force)) return false;
+
+        // ремонт уже почався: на наступних наказах штрафу не буде
+        if (fault == FaultState.Awaiting) fault = FaultState.Repairing;
+        return true;
+    }
 
     // ---------- Поломка з відстрочкою до наступних наказів ----------
 

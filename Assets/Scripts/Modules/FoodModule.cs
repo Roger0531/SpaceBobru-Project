@@ -20,13 +20,16 @@ public class FoodModule: ZoneModule
         repairChoiceNumber = 1;   // номер відповіді «чистити»
     }
 
+    public override float ProductionBonus => Bonus(ResearchEffectKind.FoodYield);
+
     protected override void OnCycle()
     {
         ApplyBaseCycle();
 
         // додаткові витрати кисню за кожну людину, поки виробляється їжа
         int producing = zone.CountDoing(WorkType.Produce);
-        if (producing > 0) AddOxygen(-oxygenPerPersonProducing * producing);
+        float perPerson = Mathf.Max(0f, oxygenPerPersonProducing - Bonus(ResearchEffectKind.FoodOxygenPerPerson));
+        if (producing > 0 && perPerson > 0f) AddOxygen(-perPerson * producing);
     }
 
     protected override void HandleEventShown(EventInfo e)
@@ -36,12 +39,20 @@ public class FoodModule: ZoneModule
         infected = true;
         zone.Break();
         SetBool(infectedParam, true);
+
+        // подія без вибору: чистити може лише медик, тож він їде одразу
+        if (!HasChoices(e)) TryAutoRepair(force: false);
     }
 
     protected override void HandleChoiceSelected(EventInfo e, EventChoice c)
     {
         if (eventId < 0 || e.eventID != eventId || !infected) return;
-        if (ChoiceNumber(e, c) == repairChoiceNumber) return; // обрано «чистити»: чекаємо медика
+
+        if (ChoiceNumber(e, c) == repairChoiceNumber)
+        {
+            TryAutoRepair(force: true);   // обрано чистку: медик їде одразу
+            return;
+        }
 
         // не чистити: весь запас їжі втрачено, грибок знищено разом із ним
         var rm = ResourceManager.Instance;

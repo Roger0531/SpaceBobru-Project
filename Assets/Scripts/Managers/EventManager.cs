@@ -42,8 +42,6 @@ public class EventManager : MonoBehaviour
     [Header("Анімації")]
     [SerializeField] private Animator panel1Animator;   // аніматор panel1
     [SerializeField] private Animator[] buttonAnimators;   // аніматор panel2
-    //[SerializeField] private Animator pageOneAnimator;  // аніматор кнопки сторінки 1
-    //[SerializeField] private Animator pageTwoAnimator;
 
     static readonly int ClosableHash = Animator.StringToHash("closable");
     static readonly int PageHash = Animator.StringToHash("CurrentPage");
@@ -52,18 +50,21 @@ public class EventManager : MonoBehaviour
     // Підписуйтесь, щоб застосувати наслідки вибору (енергія, кисень тощо)
     public event System.Action<EventInfo, EventChoice> ChoiceSelected;
 
+    // Подія показана гравцеві (і проста, і з вибором): модулі ламаються саме тут
+    public event System.Action<EventInfo> EventShown;
+
     // Колишній PanelsAreDead: активний ефект "база втрачає енергію"
     public bool PowerDrainActive { get; private set; }
+
+    // Зараз показується подія: панель наказів у цей час чекає
+    public bool IsBusy => busy;
 
     private bool busy;
     private int lastHandledTick = -1;
     private bool panel1Closable = true;
 
-    // Чи ми самі поставили час на паузу під час вибору
-    private bool pausedByChoice;
-
-    public event System.Action<EventInfo> EventShown;
-    public bool IsBusy => busy;
+    // Чи ми самі поставили час на паузу на час показу подій
+    private bool pausedByEvents;
 
     private void Awake()
     {
@@ -85,8 +86,8 @@ public class EventManager : MonoBehaviour
 
     private void OnDestroy()
     {
-        // Якщо менеджер знищили посеред вибору, не лишаємо гру на паузі
-        ResumeTimeAfterChoice();
+        // Якщо менеджер знищили посеред події, не лишаємо гру на паузі
+        ResumeTimeAfterEvents();
     }
 
     private void Update()
@@ -114,12 +115,17 @@ public class EventManager : MonoBehaviour
             EventInfo e = events[i];
             if (e.isCompleted || e.dayOccurs != day || e.hourOccurs != hour) continue;
 
+            // модуль може скасувати подію (наприклад, завдяки дослідженню): вона не показується
+            if (ZoneModule.AnyAvoids(e)) { e.isCompleted = true; continue; }
+
             if (e.choices != null && e.choices.Count > 0)
                 yield return ShowChoiceEvent(e);
             else
                 yield return ShowSimpleEvent(e);
         }
 
+        // Усі повідомлення показано: ігровий час знову йде
+        ResumeTimeAfterEvents();
         busy = false;
     }
 
@@ -127,6 +133,9 @@ public class EventManager : MonoBehaviour
     {
         if (PowerDrainActive || events.Count == 0) yield break;
         if (Random.value >= blackoutChance) yield break;
+
+        // Ігровий час стоїть, поки показується повідомлення
+        PauseTimeForEvent();
 
         PowerDrainActive = true;
         OpenPanel1(
@@ -141,19 +150,27 @@ public class EventManager : MonoBehaviour
 
     private IEnumerator ShowSimpleEvent(EventInfo e)
     {
+        // Ігровий час стоїть, поки гравець не закриє повідомлення
+        PauseTimeForEvent();
+
         // Панель з кнопкою OK: можна закрити
         OpenPanel1(e.eventName, e.eventDescription, closable: true);
+
+        // Модулі реагують одразу (час уже на паузі): ламаються, а єдиний фахівець їде лагодити
         EventShown?.Invoke(e);
 
         yield return new WaitForSeconds(panelDelay);
         yield return WaitForOk();
+
         e.isCompleted = true;
     }
 
     private IEnumerator ShowChoiceEvent(EventInfo e)
     {
         // Ігровий час стоїть, поки гравець не зробить вибір
-        PauseTimeForChoice();
+        PauseTimeForEvent();
+
+        // Модулі ламаються, поки час на паузі
         EventShown?.Invoke(e);
 
         txtEventNamePanel2.text = e.eventName;
@@ -174,30 +191,30 @@ public class EventManager : MonoBehaviour
 
         e.isCompleted = true;
         Debug.Log($"Обрано: {selected.ChoiceText}");
+
+        // Модулі реагують на вибір: якщо обрано ремонт, фахівець їде одразу (час ще на паузі)
         ChoiceSelected?.Invoke(e, selected);
 
         panel1.SetActive(false);
         panel2.SetActive(false);
         SetPageButtons(false);
-
-        ResumeTimeAfterChoice();
     }
 
     // ---------- Пауза часу ----------
 
-    private void PauseTimeForChoice()
+    private void PauseTimeForEvent()
     {
         var time = TimeManager.Instance;
-        if (time == null || time.IsPaused) return; // вже на паузі (гравцем), нічого не чіпаємо
+        if (time == null || time.IsPaused) return; // вже на паузі (гравцем або наказами), нічого не чіпаємо
 
         time.Pause();
-        pausedByChoice = true;
+        pausedByEvents = true;
     }
 
-    private void ResumeTimeAfterChoice()
+    private void ResumeTimeAfterEvents()
     {
-        if (!pausedByChoice) return;
-        pausedByChoice = false;
+        if (!pausedByEvents) return;
+        pausedByEvents = false;
 
         var time = TimeManager.Instance;
         if (time != null) time.Resume();
