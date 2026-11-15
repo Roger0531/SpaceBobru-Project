@@ -40,6 +40,7 @@ public class WorkZone : MonoBehaviour
     [SerializeField] WorkType mainWork = WorkType.None;
     [Tooltip("Друга робота, що йде одночасно з основною. Зараз підтримується лише Heal (групова робота).")]
     [SerializeField] WorkType secondaryWork = WorkType.None;
+    public WorkType SecondaryWork => secondaryWork;
     [Tooltip("Скільки людей потрібно для лікування (Heal)")]
     [SerializeField, Min(1)] int healWorkersRequired = 1;
     [Tooltip("Only for Main Work = Produce: which resource this zone produces")]
@@ -197,34 +198,63 @@ public class WorkZone : MonoBehaviour
         }
     }
 
-    // ---- Яка робота зараз у працівника ----
-    bool HasWork(WorkType t) => mainWork == t || secondaryWork == t;
-
-    public WorkType CurrentTask => GetTaskFor(null);
-
     public WorkType GetTaskFor(Worker w)
     {
         if (!WorkEnabledOk) return WorkType.None;
         if (IsDamaged) return WorkType.Repair;
 
-        // групове лікування: перші N працівників у зоні, якщо є кого лікувати
-        if (HasWork(WorkType.Heal) && IsHealer(w)) return WorkType.Heal;
-
-        WorkType task = mainWork != WorkType.Heal ? mainWork : secondaryWork;
-        if (task == WorkType.Heal) return WorkType.None;
-        if (task == WorkType.Produce && IsStorageFull) return WorkType.None;
-        return task;
+        WorkType work = ChosenWork(w);
+        if (work == WorkType.Heal) return IsHealer(w) ? WorkType.Heal : WorkType.None;
+        if (work == WorkType.Produce && IsStorageFull) return WorkType.None;
+        return work;
     }
 
+    /// <summary>Яку з двох робіт зони виконує працівник: за наказом (друга робота) або основну.</summary>
+    WorkType ChosenWork(Worker w)
+    {
+        if (w != null && secondaryWork != WorkType.None && w.PreferredWork == secondaryWork)
+            return secondaryWork;
+        return mainWork;
+    }
+
+    // лікують ті, хто обрав лікування, але лише якщо їх достатньо і є кого лікувати
     bool IsHealer(Worker w)
     {
-        if (w == null || !Worker.All.Exists(x => x.Hp < x.MaxHp)) return false;
+        if (w == null || !Worker.All.Exists(x => x.NeedsHelp)) return false;
 
         GetParticipants(buffer);
-        if (buffer.Count < healWorkersRequired) return false;
+        bool isMember = false;
+        int count = 0;
+        foreach (var p in buffer)
+        {
+            if (ChosenWork(p) != WorkType.Heal) continue;
+            if (p == w) isMember = true;
+            count++;
+        }
+        return isMember && count >= healWorkersRequired;
+    }
 
-        int idx = buffer.IndexOf(w);
-        return idx >= 0 && idx < healWorkersRequired;
+    /// <summary>Роботи, які можна обрати в панелі наказів.</summary>
+    public void GetOrderWorks(List<WorkType> result)
+    {
+        result.Clear();
+        if (mainWork != WorkType.None && mainWork != WorkType.Repair) result.Add(mainWork);
+        if (secondaryWork != WorkType.None && secondaryWork != mainWork) result.Add(secondaryWork);
+    }
+
+    /// <summary>null, якщо героя можна відправити сюди на цю роботу, інакше причина блокування.</summary>
+    public string GetOrderBlockReason(Worker hero, WorkType work)
+    {
+        if (work == WorkType.Repair)
+            return CanWorkerDo(hero, WorkType.Repair) ? null : "wrong role for repair";
+
+        switch (work)
+        {
+            case WorkType.None: return "no tasks";
+            case WorkType.Produce: return IsStorageFull ? "resource full" : null;
+            case WorkType.Heal: return Worker.All.Exists(x => x.NeedsHelp) ? null : "nobody to heal";
+            default: return null;
+        }
     }
 
     /// <summary>Скільки працівників зараз виконують цю роботу (на зміні, мають право її виконувати).</summary>

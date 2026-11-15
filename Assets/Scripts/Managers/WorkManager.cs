@@ -36,6 +36,8 @@ public class WorkManager : MonoBehaviour
         new EventMissionLink { eventName = "", choiceText = "", missionId = "relay",   workerId = -1 },
         new EventMissionLink { eventName = "", choiceText = "", missionId = "pragyan", workerId = -1 },
     };
+    [Tooltip("Одразу відкривати накази, коли роботу ввімкнено (на старті гри або після SetWorkEnabled(true))")]
+    [SerializeField] bool ordersWhenEnabled = true;
 
     int hoursSinceOrders;
     bool subscribed;
@@ -72,6 +74,8 @@ public class WorkManager : MonoBehaviour
         eventManager = EventManager.Instance;
         if (eventManager != null)
             eventManager.ChoiceSelected += HandleEventChoice;
+
+        if (workEnabled && ordersWhenEnabled) ordersPending = true;
     }
 
     void OnDestroy()
@@ -115,7 +119,11 @@ public class WorkManager : MonoBehaviour
     {
         if (workEnabled == value) return;
         workEnabled = value;
-        if (value) hoursSinceOrders = 0;
+        if (value)
+        {
+            hoursSinceOrders = 0;
+            if (ordersWhenEnabled) ordersPending = true;
+        }
         OnWorkEnabledChanged?.Invoke(value);
     }
 
@@ -169,6 +177,7 @@ public class WorkManager : MonoBehaviour
         OnOrdersClosed?.Invoke();
     }
 
+
     public bool IsAvailableForOrders(Worker w) =>
         w != null && w.isActiveAndEnabled && !w.IsBusy &&
         (Rover.Instance == null || !Rover.Instance.IsOnMission(w));
@@ -180,9 +189,9 @@ public class WorkManager : MonoBehaviour
             if (IsAvailableForOrders(w)) result.Add(w);
     }
 
-    public bool TryGiveOrder(Worker w, int zoneId)
+    public bool TryGiveOrder(Worker w, int zoneId, WorkType work = WorkType.None)
     {
         if (!IsAvailableForOrders(w)) return false;
-        return w.TryAssignToZone(zoneId, teleport: true);
+        return w.TryAssignToZone(zoneId, teleport: true, preferredWork: work);
     }
 }
